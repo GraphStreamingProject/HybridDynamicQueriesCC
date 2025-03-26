@@ -32,6 +32,59 @@ static void print_metrics() {
     std::cout << "Total number of normal refreshes: " << normal_refreshes << std::endl;
 }
 
+TEST(GraphTiersSuite, gibbs_mixed_speed_test) {
+    BinaryGraphStream stream(stream_file, 100000);
+    long edgecount = stream.edges();
+    height_factor = 1;//1./log2(log2(stream.nodes()));
+    sketch_len = Sketch::calc_vector_length(stream.nodes());
+    sketch_err = DEFAULT_SKETCH_ERR;
+    GraphTiers gt(stream.nodes());
+
+    long total_update_time = 0;
+    long total_query_time = 0;
+    auto update_timer = std::chrono::high_resolution_clock::now();
+    auto query_timer = update_timer;
+    bool doing_updates = true;
+    for (long i = 0; i < edgecount; i++) {
+        // Read an update from the stream and have the input node process it
+        GraphUpdate operation = stream.get_edge();
+        if (operation.type == 2) { // 2 is the symbol for queries
+            unlikely_if (doing_updates) {
+                total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+                doing_updates = false;
+                query_timer = std::chrono::high_resolution_clock::now();
+            }
+            gt.is_connected(operation.edge.src, operation.edge.dst);
+        } else {
+            unlikely_if (!doing_updates) {
+                total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
+                doing_updates = true;
+                update_timer = std::chrono::high_resolution_clock::now();
+            }
+            gt.update(operation);
+        }
+        unlikely_if(i%1000000 == 0 || i == edgecount-1) {
+            std::cout << "FINISHED OPERATION " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
+        }
+    }
+    if (doing_updates) {
+        total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+    } else {
+        total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
+    }
+
+    std::cout << "Total update time(ms):   " << (total_update_time/1000) << std::endl;
+    std::cout << "Total query time(ms):    " << (total_query_time/1000) << std::endl;
+
+    std::ofstream file;
+    std::string out_file = "./../results/gibbs_speed_results/" + stream_file.substr(stream_file.find("/") + 1) + ".txt";
+    std::cout << "WRITING RESULTS TO " << out_file << std::endl;
+    file.open (out_file, std::ios_base::app);
+    file << " UPDATES/SECOND: " << ((long)(0.9*edgecount))/(total_update_time/1000)*1000 << std::endl;
+    file << " QUERIES/SECOND: " << ((long)(0.1*edgecount))/(total_query_time/1000)*1000 << std::endl;
+    file.close();
+}
+
 TEST(GraphTiersSuite, mini_correctness_test) {
     node_id_t numnodes = 10;
     GraphTiers gt(numnodes);
@@ -162,7 +215,7 @@ TEST(GraphTiersSuite, omp_speed_test) {
 	    long time = 0;
         BinaryGraphStream stream(stream_file, 100000);
 
-        height_factor = 1./log2(log2(stream.nodes()));
+        height_factor = 1;//1./log2(log2(stream.nodes()));
         sketch_len = Sketch::calc_vector_length(stream.nodes());
         sketch_err = DEFAULT_SKETCH_ERR;
 
@@ -174,7 +227,7 @@ TEST(GraphTiersSuite, omp_speed_test) {
         for (int i = 0; i < edgecount; i++) {
             GraphUpdate update = stream.get_edge();
             gt.update(update);
-            unlikely_if (i % 100000 == 0) {
+            unlikely_if (i % 1000000000 == 0) {
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
