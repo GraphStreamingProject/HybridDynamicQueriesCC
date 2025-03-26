@@ -50,9 +50,11 @@ void GraphTiers::update(GraphUpdate update) {
 		link_cut_tree.cut(update.edge.src, update.edge.dst);
 	}
 	START(su);
-	#pragma omp parallel for
+	std::atomic<bool> did_cut(false);
+	// #pragma omp parallel for
 	for (uint32_t i = 0; i < ett.size(); i++) {
 		if (update.type == DELETE && ett[i].has_edge(update.edge.src, update.edge.dst)) {
+			did_cut = true;
 			ett[i].cut(update.edge.src, update.edge.dst);
 			ENDPOINT_CANARY("Cutting Tier " << i << " ETT With", update.edge.src, update.edge.dst);
 		}
@@ -63,11 +65,11 @@ void GraphTiers::update(GraphUpdate update) {
 	STOP(sketch_time, su);
 	// Refresh the data structure
 	START(ref);
-	refresh(update);
+	refresh(update, did_cut);
 	STOP(refresh_time, ref);
 }
 
-void GraphTiers::refresh(GraphUpdate update) {
+void GraphTiers::refresh(GraphUpdate update, bool did_cut) {
 	// In parallel check if all tiers are not isolated
 	START(iso);
 	std::atomic<bool> isolated(false);
@@ -101,9 +103,9 @@ void GraphTiers::refresh(GraphUpdate update) {
 		}
 	}
 	STOP(parallel_isolated_check, iso);
+	if (isolated || did_cut) normal_refreshes++;
 	if (!isolated)
 		return;
-	normal_refreshes++;
 	// For each tier for each endpoint of the edge
 	for (uint32_t tier = 0; tier < ett.size()-1; tier++) {
 		for (node_id_t v : {update.edge.src, update.edge.dst}) {
@@ -150,7 +152,7 @@ void GraphTiers::refresh(GraphUpdate update) {
 
 				// Remove the maximum tier edge on all paths where it exists
 				START(ett1);
-				#pragma omp parallel for
+				// #pragma omp parallel for
 				for (uint32_t i = max.second; i < ett.size(); i++) {
 					ett[i].cut(c,d);
 					ENDPOINT_CANARY("Cutting Tier " << i << " ETT With", c, d);
@@ -163,7 +165,7 @@ void GraphTiers::refresh(GraphUpdate update) {
 
 			// Join the ETTs for the endpoints of the edge on all tiers above the current
 			START(ett2);
-			#pragma omp parallel for
+			// #pragma omp parallel for
 			for (uint32_t i = tier+1; i < ett.size(); i++) {
 				ett[i].link(a,b);
 				ENDPOINT_CANARY("Linking Tier " << i << " ETT With", a, b);
