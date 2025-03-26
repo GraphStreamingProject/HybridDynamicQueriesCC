@@ -16,7 +16,7 @@ mkdir -p ./../results/mpi_space_results
 run_test() {
 	cat	binary_streams/$1 > /dev/null
 	mpirun -np $2 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/$1 0 $3 --gtest_filter=*mpi_mixed_speed_test* &
-	./../scripts/mem_record.sh mpi_dynamicCC_tests 2 ./../results/mpi_space_results/$2_$3_mem.txt
+	./../scripts/mem_record.sh mpi_dynamicCC_tests 2 ./../results/mpi_space_results/$1_$3_mem.txt
 	wait
 }
 
