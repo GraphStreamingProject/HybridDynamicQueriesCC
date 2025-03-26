@@ -3,7 +3,7 @@
 declare base_dir="$(dirname $(dirname $(realpath $0)))"
 
 cd ${base_dir}/build
-#set -e
+set -e
 #cmake -DSKETCH_BUFFER_SIZE=25 ..
 #make -j
 #set +e

@@ -19,7 +19,7 @@ while true; do
 	do
 		if [ -e /proc/$pid/smaps_rollup ]
 		then
-			impact=$((`cat /proc/$pid/smaps_rollup | grep Rss | awk '{print $2}'`))
+			impact=$((`cat /proc/$pid/smaps_rollup | grep '^Pss:' | awk '{print $2}'`))
 			sum=$((impact + sum))
 			#echo $pid, $impact, $sum
 		fi

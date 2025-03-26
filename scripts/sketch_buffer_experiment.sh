@@ -12,16 +12,13 @@ cd ${base_dir}/build
 mkdir -p ./../results
 mkdir -p ./../results/mpi_speed_results
 
-# Test run
-# mpirun -np 23 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/kron_13_query10_binary 0 0 --gtest_filter=*mpi_mixed_speed_test*
+run_test() {
+	cat	binary_streams/$1 > /dev/null
+	mpirun -np $2 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/$1 0 0 --gtest_filter=*mpi_mixed_speed_test*
+}
 
-# KRON-16 Batch Size Sweep
-mpirun -np 28 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/kron_16_query10_binary 0 0 --gtest_filter=*mpi_mixed_speed_test*
-# KRON-16 fixed-forest
-mpirun -np 28 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/kron_16_ff_query10_binary 0 0 --gtest_filter=*mpi_mixed_speed_test*
-
-# Twitter Batch Size Sweep
-mpirun -np 28 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/twitter_query10_binary 0 0 --gtest_filter=*mpi_mixed_speed_test*
-# Twitter fixed-forest
-mpirun -np 28 --bind-to hwthread ./mpi_dynamicCC_tests binary_streams/twitter_ff_query10_binary 0 0 --gtest_filter=*mpi_mixed_speed_test*
+run_test kron_16_query10_binary 28
+run_test kron_16_ff_query10_binary 28
+run_test twitter_query10_binary 28
+run_test twitter_ff_query10_binary 28
 

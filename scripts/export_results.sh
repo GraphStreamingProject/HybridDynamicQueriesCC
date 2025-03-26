@@ -1,8 +1,8 @@
 #!/bin/bash
 
-declare base_dir="$(dirname $(dirname $(realpath $0)))"
+#declare base_dir="$(dirname $(dirname $(realpath $0)))"
 
-cd ${base_dir}/results/mpi_speed_results
+#cd ${base_dir}/results/mpi_speed_results
 
 
 write_out() {
@@ -63,6 +63,9 @@ do
 	write_out ${streams[$i]} $updates $queries
 done
 
+echo "" >> $updates
+echo "" >> $queries
+
 updates="UPDATES_FF.txt"
 queries="QUERIES_FF.txt"
 rm $updates
@@ -72,4 +75,7 @@ for i in $(seq 14 27);
 do
 	write_out ${streams[$i]} $updates $queries
 done
+
+echo "" >> $updates
+echo "" >> $queries
 
