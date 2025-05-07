@@ -41,7 +41,7 @@ typedef struct {
 typedef struct {
   node_id_t v = 0;
   uint32_t prev_tier_size = 0;
-  SketchSample sketch_query_result;
+  SketchSample<vec_t> sketch_query_result;
 } RefreshEndpoint;
 
 typedef struct {

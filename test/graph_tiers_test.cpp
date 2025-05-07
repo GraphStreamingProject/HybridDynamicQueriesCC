@@ -1,12 +1,13 @@
 #include <gtest/gtest.h>
 #include <chrono>
 #include <signal.h>
-#include <omp.h>
+// #include <omp.h>
 #include <iostream>
 #include <fstream>
 #include "graph_tiers.h"
 #include "binary_graph_stream.h"
-#include "mat_graph_verifier.h"
+// #include "mat_graph_verifier.h"
+#include "graph_verifier.h"
 #include "util.h"
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
@@ -35,16 +36,16 @@ static void print_metrics() {
 TEST(GraphTiersSuite, mini_correctness_test) {
     node_id_t numnodes = 10;
     GraphTiers gt(numnodes);
-    MatGraphVerifier gv(numnodes);
+    GraphVerifier gv(numnodes);
 
     // Link all of the nodes into 1 connected component
     for (node_id_t i = 0; i < numnodes-1; i++) {
         gt.update({{i, i+1}, INSERT});
-        gv.edge_update(i,i+1);
+        gv.edge_update({i,i+1});
         std::vector<std::set<node_id_t>> cc = gt.get_cc();
         try {
-            gv.reset_cc_state();
-            gv.verify_soln(cc);
+            // gv.reset_cc_state();
+            gv.verify_cc_from_component_set(cc);
         } catch (IncorrectCCException& e) {
             std::cout << "Incorrect cc found after linking nodes " << i << " and " << i+1 << std::endl;
             std::cout << "GOT: " << cc.size() << " components, EXPECTED: " << numnodes-i-1 << " components" << std::endl;
@@ -54,11 +55,11 @@ TEST(GraphTiersSuite, mini_correctness_test) {
     // One by one cut all of the nodes into singletons
     for (node_id_t i = 0; i < numnodes-1; i++) {
         gt.update({{i, i+1}, DELETE});
-        gv.edge_update(i,i+1);
+        gv.edge_update({i,i+1});
         std::vector<std::set<node_id_t>> cc = gt.get_cc();
         try {
-            gv.reset_cc_state();
-            gv.verify_soln(cc);
+            // gv.reset_cc_state();
+            gv.verify_cc_from_component_set(cc);
         } catch (IncorrectCCException& e) {
             std::cout << "Incorrect cc found after cutting nodes " << i << " and " << i+1 << std::endl;
             std::cout << "GOT: " << cc.size() << " components, EXPECTED: " << i+2 << " components" << std::endl;
@@ -70,16 +71,16 @@ TEST(GraphTiersSuite, mini_correctness_test) {
 TEST(GraphTiersSuite, deletion_replace_correctness_test) {
     node_id_t numnodes = 50;
     GraphTiers gt(numnodes);
-    MatGraphVerifier gv(numnodes);
+    GraphVerifier gv(numnodes);
 
     // Link all of the nodes into 1 connected component
     for (node_id_t i = 0; i < numnodes-1; i++) {
         gt.update({{i, i+1}, INSERT});
-        gv.edge_update(i,i+1);
+        gv.edge_update({i,i+1});
         std::vector<std::set<node_id_t>> cc = gt.get_cc();
         try {
-            gv.reset_cc_state();
-            gv.verify_soln(cc);
+            // gv.reset_cc_state();
+            gv.verify_cc_from_component_set(cc);
         } catch (IncorrectCCException& e) {
             std::cout << "Incorrect cc found after linking nodes " << i << " and " << i+1 << std::endl;
             std::cout << "GOT: " << cc.size() << " components, EXPECTED: " << numnodes-i-1 << " components" << std::endl;
@@ -93,19 +94,19 @@ TEST(GraphTiersSuite, deletion_replace_correctness_test) {
         second = rand() % numnodes;
 
     gt.update({{first, second}, INSERT});
-    gv.edge_update(first, second);
+    gv.edge_update({first, second});
 
     node_id_t distance = std::max(first, second) - std::min(first, second);
     // Cut a random edge
     first = std::min(first, second) + rand() % (distance-1);
 
     gt.update({{first, first+1}, DELETE});
-    gv.edge_update(first, first+1);
+    gv.edge_update({first, first+1});
 
     std::vector<std::set<node_id_t>> cc = gt.get_cc();
     try {
-        gv.reset_cc_state();
-        gv.verify_soln(cc);
+        // gv.reset_cc_state();
+        gv.verify_cc_from_component_set(cc);
     } catch (IncorrectCCException& e) {
         std::cout << "Incorrect cc found after cutting nodes " << first << " and " << first+1 << std::endl;
         std::cout << "GOT: " << cc.size() << " components, EXPECTED: 1 components" << std::endl;
@@ -115,7 +116,7 @@ TEST(GraphTiersSuite, deletion_replace_correctness_test) {
 }
 
 TEST(GraphTiersSuite, omp_correctness_test) {
-    omp_set_dynamic(1);
+    // omp_set_dynamic(1);
     try {
         BinaryGraphStream stream(stream_file, 100000);
 
@@ -126,18 +127,18 @@ TEST(GraphTiersSuite, omp_correctness_test) {
         GraphTiers gt(stream.nodes());
         int edgecount = stream.edges();
         edgecount = 1000000;
-        MatGraphVerifier gv(stream.nodes());
+        GraphVerifier gv(stream.nodes());
         start = std::chrono::high_resolution_clock::now();
 
         for (int i = 0; i < edgecount; i++) {
             GraphUpdate update = stream.get_edge();
             gt.update(update);
-            gv.edge_update(update.edge.src, update.edge.dst);
+            gv.edge_update(update.edge);
             unlikely_if(i%1000 == 0 || i == edgecount-1) {
                 std::vector<std::set<node_id_t>> cc = gt.get_cc();
                 try {
-                    gv.reset_cc_state();
-                    gv.verify_soln(cc);
+                    // gv.reset_cc_state();
+                    gv.verify_cc_from_component_set(cc);
                     std::cout << "Update " << i << ", CCs correct." << std::endl;
                 } catch (IncorrectCCException& e) {
                     std::cout << "Incorrect connected components found at update "  << i << std::endl;
@@ -157,7 +158,7 @@ TEST(GraphTiersSuite, omp_correctness_test) {
 }
 
 TEST(GraphTiersSuite, omp_speed_test) {
-    omp_set_dynamic(1);
+    // omp_set_dynamic(1);
     try {
 	    long time = 0;
         BinaryGraphStream stream(stream_file, 100000);
@@ -193,7 +194,7 @@ TEST(GraphTiersSuite, omp_speed_test) {
 }
 
 TEST(GraphTiersSuite, query_speed_test) {
-    omp_set_dynamic(1);
+    // omp_set_dynamic(1);
     try {
 
         BinaryGraphStream stream(stream_file, 100000);

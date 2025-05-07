@@ -80,7 +80,7 @@ void GraphTiers::refresh(GraphUpdate update) {
 			root_nodes[2*tier]->process_updates();
 			Sketch* ett_agg1 = root_nodes[2*tier]->sketch_agg;
 			ett_agg1->reset_sample_state();
-			SketchSample query_result1 = ett_agg1->sample();
+			SketchSample<> query_result1 = ett_agg1->sample();
 			if (query_result1.result == GOOD) {
 				isolated = true;
 				continue;
