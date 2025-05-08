@@ -21,7 +21,8 @@ long tiers_grown = 0;
 long normal_refreshes = 0;
 
 
-GraphTiers::GraphTiers(node_id_t num_nodes) : link_cut_tree(num_nodes) {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+GraphTiers<SketchClass>::GraphTiers(node_id_t num_nodes) : link_cut_tree(num_nodes) {
 	// Algorithm parameters
 	uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
 
@@ -41,9 +42,11 @@ GraphTiers::GraphTiers(node_id_t num_nodes) : link_cut_tree(num_nodes) {
 	root_nodes.reserve(num_tiers*2);
 }
 
-GraphTiers::~GraphTiers() {}
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+GraphTiers<SketchClass>::~GraphTiers() {}
 
-void GraphTiers::update(GraphUpdate update) {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+void GraphTiers<SketchClass>::update(GraphUpdate update) {
 	edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
 	// Update the sketches of both endpoints of the edge in all tiers
 	if (update.type == DELETE && link_cut_tree.has_edge(update.edge.src, update.edge.dst)) {
@@ -67,7 +70,8 @@ void GraphTiers::update(GraphUpdate update) {
 	STOP(refresh_time, ref);
 }
 
-void GraphTiers::refresh(GraphUpdate update) {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+void GraphTiers<SketchClass>::refresh(GraphUpdate update) {
 	// In parallel check if all tiers are not isolated
 	START(iso);
 	std::atomic<bool> isolated(false);
@@ -117,7 +121,7 @@ void GraphTiers::refresh(GraphUpdate update) {
 				continue;
 
 			START(agg);
-			SkipListNode* root = ett[tier].get_root(v);
+			SkipListNode<SketchClass>* root = ett[tier].get_root(v);
 			root->process_updates();
 			Sketch* ett_agg = root->sketch_agg;
 			STOP(ett_get_agg, agg);
@@ -176,13 +180,14 @@ void GraphTiers::refresh(GraphUpdate update) {
 	}
 }
 
-std::vector<std::set<node_id_t>> GraphTiers::get_cc() {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+std::vector<std::set<node_id_t>> GraphTiers<SketchClass>::get_cc() {
 	std::vector<std::set<node_id_t>> cc;
-	std::set<EulerTourNode*> visited;
+	std::set<EulerTourNode<SketchClass>*> visited;
 	int top = ett.size()-1;
 	for (uint32_t i = 0; i < ett[top].ett_nodes.size(); i++) {
 		if (visited.find(&ett[top].ett_nodes[i]) == visited.end()) {
-			std::set<EulerTourNode*> pointer_component = ett[top].ett_nodes[i].get_component();
+			std::set<EulerTourNode<SketchClass>*> pointer_component = ett[top].ett_nodes[i].get_component();
 			std::set<node_id_t> component;
 			for (auto pointer : pointer_component) {
 				component.insert(pointer->vertex);
@@ -194,6 +199,7 @@ std::vector<std::set<node_id_t>> GraphTiers::get_cc() {
 	return cc;
 }
 
-bool GraphTiers::is_connected(node_id_t a, node_id_t b) {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool GraphTiers<SketchClass>::is_connected(node_id_t a, node_id_t b) {
 	return this->link_cut_tree.find_root(a) == this->link_cut_tree.find_root(b);
 }
