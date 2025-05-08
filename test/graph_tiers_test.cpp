@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <chrono>
 #include <signal.h>
-// #include <omp.h>
+#include <omp.h>
 #include <iostream>
 #include <fstream>
 #include "graph_tiers.h"
@@ -116,7 +116,7 @@ TEST(GraphTiersSuite, deletion_replace_correctness_test) {
 }
 
 TEST(GraphTiersSuite, omp_correctness_test) {
-    // omp_set_dynamic(1);
+    omp_set_dynamic(1);
     try {
         BinaryGraphStream stream(stream_file, 100000);
 
@@ -158,7 +158,7 @@ TEST(GraphTiersSuite, omp_correctness_test) {
 }
 
 TEST(GraphTiersSuite, omp_speed_test) {
-    // omp_set_dynamic(1);
+    omp_set_dynamic(1);
     try {
 	    long time = 0;
         BinaryGraphStream stream(stream_file, 100000);
@@ -194,7 +194,7 @@ TEST(GraphTiersSuite, omp_speed_test) {
 }
 
 TEST(GraphTiersSuite, query_speed_test) {
-    // omp_set_dynamic(1);
+    omp_set_dynamic(1);
     try {
 
         BinaryGraphStream stream(stream_file, 100000);

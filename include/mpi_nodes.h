@@ -8,6 +8,7 @@
 #include "sketchless_euler_tour_tree.h"
 #include "link_cut_tree.h"
 #include "mpi_functions.h"
+#include "sketch/sketch_concept.h"
 
 
 enum TreeOperationType {

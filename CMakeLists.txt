@@ -74,6 +74,9 @@ target_include_directories(dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(dynamicCC_tests GraphZeppelinVerifyCC)
 target_link_libraries(dynamicCC_tests PRIVATE GraphZeppelinVerifyCC ${MPI_LIBRARIES})
 
+target_compile_options(dynamicCC_tests PUBLIC -fopenmp)
+target_link_options(dynamicCC_tests PUBLIC -fopenmp)
+
 add_executable(mpi_dynamicCC_tests
   test/mpi_test_runner.cpp
   test/mpi_graph_tiers_test.cpp
@@ -90,6 +93,9 @@ add_executable(mpi_dynamicCC_tests
 target_include_directories(mpi_dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(mpi_dynamicCC_tests GraphZeppelinVerifyCC)
 target_link_libraries(mpi_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC ${MPI_LIBRARIES})
+
+target_compile_options(mpi_dynamicCC_tests PUBLIC -fopenmp)
+target_link_options(mpi_dynamicCC_tests PUBLIC -fopenmp)
 
 #######
 # TODO: Is MPI INCLUDE PATH necessary?
