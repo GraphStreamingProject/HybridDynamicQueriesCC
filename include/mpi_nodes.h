@@ -10,6 +10,7 @@
 #include "mpi_functions.h"
 #include "sketch/sketch_concept.h"
 #include "sketch/sketch_columns.h"
+#include "sketch_interfacing.h"
 
 
 enum TreeOperationType {
@@ -80,7 +81,7 @@ public:
 };
 
 class TierNode {
-  EulerTourTree<FixedSizeSketchColumn> ett;
+  EulerTourTree<DefaultSketchColumn> ett;
   uint32_t tier_num;
   uint32_t num_tiers;
   int batch_size;

@@ -152,9 +152,9 @@ void TierNode::main() {
                         e2.v = refresh_message.endpoints.second.v;
                         for (RefreshEndpoint* e : {&e1, &e2}) {
                             e->prev_tier_size = ett.get_size(e->v);
-                            SkipListNode* root = ett.get_root(e->v);
+                            SkipListNode<DefaultSketchColumn>* root = ett.get_root(e->v);
                             root->process_updates();
-                            Sketch* ett_agg = root->sketch_agg;
+                            DefaultSketchColumn* ett_agg = root->sketch_agg;
                             ett_agg->reset_sample_state();
                             e->sketch_query_result = ett_agg->sample();
                         }
