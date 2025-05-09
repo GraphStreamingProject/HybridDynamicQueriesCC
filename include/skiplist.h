@@ -3,8 +3,9 @@
 #include <gtest/gtest.h>
 #include "sketch.h"
 #include "sketch/sketch_columns.h"
+#include "sketch_interfacing.h"
 
-template <typename SketchClass = FixedSizeSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class EulerTourNode;
 
 constexpr int skiplist_buffer_cap = 25;
@@ -13,15 +14,15 @@ extern double height_factor;
 extern vec_t sketch_len;
 extern vec_t sketch_err;
 
-template <typename SketchClass = FixedSizeSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class SkipListNode {
 
-  SkipListNode* left = nullptr;
-  SkipListNode* right = nullptr;
-  SkipListNode* up = nullptr;
-  SkipListNode* down = nullptr;
+  SkipListNode<SketchClass>* left = nullptr;
+  SkipListNode<SketchClass>* right = nullptr;
+  SkipListNode<SketchClass>* up = nullptr;
+  SkipListNode<SketchClass>* down = nullptr;
   // Store the first node to the left on the next level up
-  SkipListNode* parent = nullptr;
+  SkipListNode<SketchClass>* parent = nullptr;
 
   vec_t update_buffer[skiplist_buffer_cap];
   int buffer_size = 0;
@@ -79,7 +80,7 @@ public:
   static SkipListNode<SketchClass>* split_right(SkipListNode<SketchClass>* node);
 
   bool isvalid();
-  SkipListNode* next();
+  SkipListNode<SketchClass>* next();
   int print_list();
 };
 

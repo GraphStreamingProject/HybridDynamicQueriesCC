@@ -4,6 +4,7 @@
 
 #include <skiplist.h>
 #include "sketch/sketch_concept.h"
+#include "sketch_interfacing.h"
 
 
 
@@ -42,18 +43,19 @@ public:
 
   SketchClass* get_aggregate();
   uint32_t get_size();
-  bool has_edge_to(EulerTourNode* other);
+  bool has_edge_to(EulerTourNode<SketchClass>* other);
 
-  std::set<EulerTourNode*> get_component();
+  std::set<EulerTourNode<SketchClass>*> get_component();
 
   long get_seed() {return seed;};
 
-  friend std::ostream& operator<<(std::ostream& os, const EulerTourNode& ett);
+  template <typename T> requires(SketchColumnConcept<T, vec_t>)
+  friend std::ostream& operator<<(std::ostream& os, const EulerTourNode<T>& ett);
 };
 
-template <typename SketchClass = FixedSizeSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class EulerTourTree {
-  Sketch* temp_sketch;
+  SketchClass* temp_sketch;
 public:
   std::vector<EulerTourNode<SketchClass>> ett_nodes;
   

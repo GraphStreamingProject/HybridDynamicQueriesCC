@@ -12,7 +12,11 @@ vec_t sketch_err;
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 SkipListNode<SketchClass>::SkipListNode(EulerTourNode<SketchClass>* node, long seed, bool has_sketch) : node(node) {
-	if (has_sketch) sketch_agg = new Sketch(sketch_len, seed, 1, sketch_err);
+	// if (has_sketch) sketch_agg = new Sketch(sketch_len, seed, 1, sketch_err);
+	// TODO - FIGURE OUT HOW TO DO SEEDING PROPERLY
+        if (has_sketch)
+          sketch_agg = new SketchClass(
+              SketchClass::suggest_capacity(sketch_len), seed % (1 << 16));
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -250,7 +254,9 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 	// If right list was taller add new boundary nodes to left list
 	if (r_curr) {
 		// Cache the left root to initialize the new boundary nodes
-		Sketch* l_root_agg = new Sketch(sketch_len, seed, 1, sketch_err);
+		// Sketch* l_root_agg = new Sketch(sketch_len, seed, 1, sketch_err);
+		SketchClass* l_root_agg = new SketchClass(
+			SketchClass::suggest_capacity(sketch_len), seed % (1 << 16));
 		l_prev->process_updates();
 		l_root_agg->merge(*l_prev->sketch_agg);
 		l_root_agg->merge(*r_prev->sketch_agg);
@@ -367,3 +373,6 @@ template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>
 SkipListNode<SketchClass>* SkipListNode<SketchClass>::next() {
 	return this->right;
 }
+
+
+template class SkipListNode<DefaultSketchColumn>;

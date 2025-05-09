@@ -143,7 +143,8 @@ TEST(EulerTourTreeSuite, random_links_and_cuts) {
     if (aggs.find(sentinel) == aggs.end())
     {
       // DefaultSketchColumn* agg = new Sketch(sketch_len, seed, 1, sketch_err);
-      DefaultSketchColumn *agg = new DefaultSketchColumn(4, 0);
+      DefaultSketchColumn *agg = new DefaultSketchColumn(
+          DefaultSketchColumn::suggest_capacity(sketch_len), seed % (1 << 16));
       aggs.insert({sentinel, agg});
       SkipListNode<DefaultSketchColumn>* sentinel_root = sentinel->get_root();
       
@@ -168,7 +169,9 @@ TEST(EulerTourTreeSuite, random_links_and_cuts) {
     else
     {
       // Sketch* agg = new Sketch(sketch_len, seed, 1, sketch_err);
-      DefaultSketchColumn *agg = new DefaultSketchColumn(4, 0);
+      // DefaultSketchColumn *agg = new DefaultSketchColumn(4, 0);
+      DefaultSketchColumn *agg = new DefaultSketchColumn(
+          DefaultSketchColumn::suggest_capacity(sketch_len), seed % (1 << 16));
       naive_aggs.insert({sentinel, agg});
       naive_aggs[sentinel]->merge(*ett.ett_nodes[i].allowed_caller->sketch_agg);
       naive_sizes[sentinel] = 1;
@@ -196,7 +199,9 @@ TEST(EulerTourTreeSuite, get_aggregate) {
 
   // Keep a manual aggregate of all the sketches
   // DefaultSketchColumn true_aggregate(sketch_len, seed, 1, sketch_err);
-  DefaultSketchColumn true_aggregate(4, 0);
+  // DefaultSketchColumn true_aggregate(4, 0);
+  DefaultSketchColumn true_aggregate(
+      DefaultSketchColumn::suggest_capacity(sketch_len), seed % (1 << 16));
 
   int nodecount = 1000;
   EulerTourTree<DefaultSketchColumn> ett(nodecount, 0, seed);

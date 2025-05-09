@@ -24,7 +24,7 @@ extern std::atomic<long> num_sketch_batches;
 
 // maintains the tiers of the algorithm
 // and the spanning forest of the entire graph
-template <typename SketchClass = FixedSizeSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class GraphTiers {
   FRIEND_TEST(GraphTiersSuite, mini_correctness_test);
 private:

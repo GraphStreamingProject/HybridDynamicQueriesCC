@@ -2,8 +2,10 @@
 #include <gtest/gtest.h>
 #include "skiplist.h"
 #include "euler_tour_tree.h"
+#include "sketch_interfacing.h"
 
-bool SkipListNode::isvalid() {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool SkipListNode<SketchClass>::isvalid() {
 	bool valid = true;
 	if (this->up && this->up->down != this) valid = false;
 	if (this->down && this->down->up != this) valid = false;
@@ -14,7 +16,8 @@ bool SkipListNode::isvalid() {
 	return valid;
 }
 
-int SkipListNode::print_list() {
+template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+int SkipListNode<SketchClass>::print_list() {
     SkipListNode* curr = this->get_first();
     while (curr) {
         if (curr->node) std::cout << curr->node->vertex << ":\t";
@@ -31,14 +34,16 @@ int SkipListNode::print_list() {
     return 0;
 }
 
-bool aggregate_correct(SkipListNode* node) {
-    Sketch* naive_agg = new Sketch(sketch_len, node->node->get_seed(), 1, sketch_err);
-    std::set<EulerTourNode*> component = node->get_component();
+bool aggregate_correct(SkipListNode<DefaultSketchColumn>* node) {
+    // Sketch* naive_agg = new Sketch(sketch_len, node->node->get_seed(), 1, sketch_err);
+    DefaultSketchColumn *naive_agg = new DefaultSketchColumn(
+        DefaultSketchColumn::suggest_capacity(sketch_len), node->node->get_seed() % (1 << 16));
+    std::set<EulerTourNode<DefaultSketchColumn>*> component = node->get_component();
     for (auto ett_node : component) {
         naive_agg->update(ett_node->vertex);
     }
     node->get_root()->process_updates();
-    Sketch* list_agg = node->get_list_aggregate();
+    DefaultSketchColumn* list_agg = node->get_list_aggregate();
     return *naive_agg == *list_agg;
 }
 
@@ -50,8 +55,8 @@ TEST(SkipListSuite, join_split_test) {
 
     long seed = time(NULL);
     srand(seed);
-    EulerTourTree ett(num_elements, 0, seed);
-    SkipListNode* nodes[num_elements];
+    EulerTourTree<DefaultSketchColumn> ett(num_elements, 0, seed);
+    SkipListNode<DefaultSketchColumn>* nodes[num_elements];
 
     // Construct all of the ett_nodes and singleton SkipList nodes
     for (int i = 0; i < num_elements; i++) {
@@ -60,23 +65,23 @@ TEST(SkipListSuite, join_split_test) {
     }
 
     // Link all the nodes two at a time, then link them all
-    for (int i = 0; i < num_elements; i+=2) SkipListNode::join(nodes[i], nodes[i+1]);
+    for (int i = 0; i < num_elements; i+=2) SkipListNode<DefaultSketchColumn>::join(nodes[i], nodes[i+1]);
     for (int i = 0; i < num_elements; i++) {
         ASSERT_TRUE(nodes[i]->isvalid());
         ASSERT_TRUE(aggregate_correct(nodes[i])) << "Node " << i << " agg incorrect";
     }
-    for (int i = 0; i < num_elements-2; i+=2) SkipListNode::join(nodes[i], nodes[i+2]);
+    for (int i = 0; i < num_elements-2; i+=2) SkipListNode<DefaultSketchColumn>::join(nodes[i], nodes[i+2]);
     for (int i = 0; i < num_elements; i++) {
         ASSERT_TRUE(nodes[i]->isvalid());
         ASSERT_TRUE(aggregate_correct(nodes[i])) << "Node " << i << " agg incorrect";
     }
     // Split all nodes into pairs, then split each pair
-    for (int i = 0; i < num_elements-2; i+=2) SkipListNode::split_left(nodes[i+2]);
+    for (int i = 0; i < num_elements-2; i+=2) SkipListNode<DefaultSketchColumn>::split_left(nodes[i+2]);
     for (int i = 0; i < num_elements; i++) {
         ASSERT_TRUE(nodes[i]->isvalid());
         ASSERT_TRUE(aggregate_correct(nodes[i])) << "Node " << i << " agg incorrect";
     }
-    for (int i = 0; i < num_elements; i+=2) SkipListNode::split_left(nodes[i+1]);
+    for (int i = 0; i < num_elements; i+=2) SkipListNode<DefaultSketchColumn>::split_left(nodes[i+1]);
     for (int i = 0; i < num_elements; i++) {
         ASSERT_TRUE(nodes[i]->isvalid());
         ASSERT_TRUE(aggregate_correct(nodes[i])) << "Node " << i << " agg incorrect";

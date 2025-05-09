@@ -10,7 +10,10 @@ EulerTourTree<SketchClass>::EulerTourTree(node_id_t num_nodes, uint32_t tier_num
         ett_nodes.emplace_back(seed, i, tier_num);
     }
     // Initialize the temp_sketch
-    this->temp_sketch = new Sketch(sketch_len, seed, 1, sketch_err);
+    // this->temp_sketch = new Sketch(sketch_len, seed, 1, sketch_err);
+    // this-> temp_sketch = new SketchClass(4, 0);
+    this -> temp_sketch = new SketchClass(
+        SketchClass::suggest_capacity(sketch_len), seed % (1 << 16));
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -117,7 +120,7 @@ SkipListNode<SketchClass>* EulerTourNode<SketchClass>::make_edge(EulerTourNode<S
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void EulerTourNode<SketchClass>::delete_edge(EulerTourNode* other, SketchClass* temp_sketch) {
+void EulerTourNode<SketchClass>::delete_edge(EulerTourNode<SketchClass>* other, SketchClass* temp_sketch) {
   assert(!other || this->tier == other->tier);
   SkipListNode<SketchClass>* node_to_delete = this->edges[other];
   this->edges.erase(other);
@@ -258,3 +261,8 @@ bool EulerTourNode<SketchClass>::cut(EulerTourNode<SketchClass>& other, SketchCl
 
   return true;
 }
+
+template class EulerTourNode<DefaultSketchColumn>;
+template class EulerTourTree<DefaultSketchColumn>;
+
+// template std::ostream& operator<<(std::ostream&, const EulerTourNode<FixedSizeSketchColumn>&);
