@@ -39,7 +39,9 @@ GraphTiers<SketchClass>::GraphTiers(node_id_t num_nodes) : link_cut_tree(num_nod
 		ett.emplace_back(num_nodes, i, tier_seed);
 	}
 
-	root_nodes.reserve(num_tiers*2);
+	// TODO - we were getting lucky this worked with reserve instead of resize
+	// I think?
+	root_nodes.resize(num_tiers*2);
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
