@@ -57,6 +57,7 @@ template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConce
 class EulerTourTree {
   SketchClass temp_sketch;
 public:
+  // std::unordered_map<node_id_t, EulerTourNode<SketchClass>*> nodes;
   std::vector<EulerTourNode<SketchClass>> ett_nodes;
   
   EulerTourTree(node_id_t num_nodes, uint32_t tier_num, int seed);

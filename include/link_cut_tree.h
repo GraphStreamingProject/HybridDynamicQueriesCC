@@ -76,6 +76,7 @@ class LinkCutTree {
   FRIEND_TEST(LinkCutTreeSuite, expose_simple_test);
   FRIEND_TEST(LinkCutTreeSuite, random_links_and_cuts);
   
+  // TODO - double check this vector
   std::vector<LinkCutNode> nodes;
 
   // Concatenate the paths with aux trees rooted at v and w and return the root of the combined aux tree

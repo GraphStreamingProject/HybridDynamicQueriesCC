@@ -5,6 +5,7 @@
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 EulerTourTree<SketchClass>::EulerTourTree(node_id_t num_nodes, uint32_t tier_num, int seed) : temp_sketch(0, seed) {
   // Initialize all the ETT node
+  // TODO - change this to take in a hashmap
     ett_nodes.reserve(num_nodes);
     for (node_id_t i = 0; i < num_nodes; ++i) {
         ett_nodes.emplace_back(seed, i, tier_num);

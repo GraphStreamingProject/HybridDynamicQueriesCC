@@ -234,6 +234,8 @@ LinkCutNode* LinkCutTree::join(LinkCutNode* v, LinkCutNode* w) {
     assert(v != nullptr && w != nullptr && v->get_parent() == nullptr && w->get_parent() == nullptr);
     LinkCutNode* tail = v->get_tail();
     LinkCutNode* head = w->get_head();
+    // TODO - this nodes vector is confusing me. 
+    // oh it's pointer arithmetic to standardize the node id
     node_id_t tail_id = tail-&(this->nodes[0]);
     node_id_t head_id = head-&(this->nodes[0]);
     edge_id_t edge = (tail_id < head_id) ? (((edge_id_t)tail_id << 32) + head_id) : (((edge_id_t)head_id << 32) + tail_id);
