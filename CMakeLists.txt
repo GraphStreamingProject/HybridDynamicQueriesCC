@@ -49,8 +49,23 @@ FetchContent_Declare(
   GIT_REPOSITORY      https://github.com/GraphStreamingProject/GraphZeppelin
   GIT_TAG             db06e662aa7563716e49e3f5036e773a97a7dd64 #main
 )
-
 FetchContent_MakeAvailable(GraphZeppelinVerifyCC)
+
+FetchContent_Declare(parlaylib
+  GIT_REPOSITORY  https://github.com/cmuparlay/parlaylib.git
+  GIT_TAG         master
+)
+FetchContent_GetProperties(parlaylib)
+if(NOT parlaylib_POPULATED)
+  FetchContent_Populate(parlaylib)
+  add_subdirectory(${parlaylib_SOURCE_DIR} EXCLUDE_FROM_ALL)
+endif()
+
+FetchContent_Declare(parallel-ett
+    GIT_REPOSITORY  git@github.com:quintendeman/parallel-euler-tour-tree.git
+    GIT_TAG         master
+)
+FetchContent_MakeAvailable(parallel-ett)
 
 #add_compile_options(-fsanitize=address)
 #add_link_options(-fsanitize=address)
@@ -90,6 +105,11 @@ add_executable(mpi_dynamicCC_tests
 target_include_directories(mpi_dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(mpi_dynamicCC_tests GraphZeppelinVerifyCC)
 target_link_libraries(mpi_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC ${MPI_LIBRARIES})
+
+add_executable(par_ett_test
+  test/par_ett_test.cpp
+)
+target_link_libraries(par_ett_test parlay par-ett)
 
 #######
 # TODO: Is MPI INCLUDE PATH necessary?
