@@ -38,6 +38,9 @@ concept CutsetDataStructure = requires(T t, node_id_t u, node_id_t v, Sketch& s,
 
     // Sketch Updates
     // Standardized update interface
+    // expectation: you call this, and the ROOT aggregate for this level of the cutset data structure
+    // (and everything along the path to the root)
+    // will also be updated
     { t.update_sketch(u, update_idx) } -> std::convertible_to<typename T::Handle>;
     { t.generate_entry_delta(u, update_idx) } -> std::same_as<ColumnEntryDelta>;
     { t.update_sketch_atomic(u, delta) } -> std::convertible_to<typename T::Handle>;

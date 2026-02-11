@@ -5,40 +5,26 @@
 #include "sketch_interfacing.h"
 #include "types.h"
 #include <absl/container/flat_hash_set.h>
-#include <absl/container/flat_hash_map.h>
 #include <unordered_set>
 
 
 namespace ufo {
 
-template<typename v_t, typename e_t>
-class UFOTree {
-using Cluster = UFOCluster<v_t, e_t>;
+template<typename SketchClass>
+class CutsetUFOTree {
+using Cluster = UFOCluster<SketchClass>;
 public:
     // --- CutsetDataStructure type aliases ---
-    using SketchType = DefaultSketchColumn;
+    using SketchType = SketchClass;
     using Handle = Cluster*;
 
-    // UFO tree interface
-    UFOTree(
-        vertex_t n, QueryType q = CONNECTIVITY,
-        std::function<v_t(v_t, v_t)> f_v = [](v_t x, v_t y) -> v_t {return x;},
-        std::function<e_t(e_t, e_t)> f_e = [](e_t x, e_t y) -> e_t {return x;});
-    UFOTree(
-        vertex_t n, QueryType q,
-        std::function<v_t(v_t, v_t)> f_v, std::function<e_t(e_t, e_t)> f_e,
-        v_t id_v, e_t id_e, v_t dval_v, e_t dval_e);
-    UFOTree(int n, QueryType q, std::function<v_t(v_t, v_t)> f, v_t id, v_t d_val);
+    // Cutset-mode constructor
+    CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed);
 
-    // Cutset-mode constructor (no function pointers needed)
-    UFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed);
-
-    ~UFOTree();
+    ~CutsetUFOTree();
     void link(vertex_t u, vertex_t v);
-    void link(vertex_t u, vertex_t v, e_t value);
     void cut(vertex_t u, vertex_t v);
     bool connected(vertex_t u, vertex_t v);
-    e_t path_query(vertex_t u, vertex_t v);
     // Testing helpers
     size_t space();
     size_t count_nodes();
@@ -115,12 +101,6 @@ private:
     int max_level;
     std::vector<std::pair<Cluster*,vertex_t>> lower_deg[2]; // lower_deg helps to identify clusters who became low degree during a deletion update
     QueryType query_type;
-    std::function<v_t(v_t, v_t)> f_v;
-    v_t identity_v;
-    v_t default_v;
-    std::function<e_t(e_t, e_t)> f_e;
-    e_t identity_e;
-    e_t default_e;
     uint32_t tier_num_ = 0;
     size_t seed_ = 0;
 
@@ -134,52 +114,29 @@ private:
     bool is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level);
     void disconnect_siblings(Cluster* c, int level);
     void insert_adjacency(Cluster* u, Cluster* v);
-    void insert_adjacency(Cluster* u, Cluster* v, e_t value);
     void remove_adjacency(Cluster* u, Cluster* v);
 
     // Sketch aggregate recomputation helpers
     void recompute_component_sketch(Cluster* root);
+    // Top-down traversal helpers (via center pointers)
+    void walk_down_recompute(Cluster* c, Cluster* root);
+    void walk_down_vertices(Cluster* c, std::vector<node_id_t>& vertices);
 };
 
-template<typename v_t, typename e_t>
-UFOTree<v_t, e_t>::UFOTree(vertex_t n, QueryType q,
-        std::function<v_t(v_t, v_t)> f_v, std::function<e_t(e_t, e_t)> f_e)
-    : query_type(q), f_v(f_v), f_e(f_e) {
-    leaves.resize(n);
-    root_clusters.resize(max_tree_height(n));
-    for (int i = 0; i < n; ++i)
+// --- Constructor / Destructor ---
+
+template<typename SketchClass>
+CutsetUFOTree<SketchClass>::CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed)
+    : query_type(CONNECTIVITY), tier_num_(tier_num), seed_(static_cast<size_t>(seed)) {
+    leaves.resize(max_num_nodes);
+    root_clusters.resize(max_tree_height(max_num_nodes));
+    for (int i = 0; i < static_cast<int>(max_num_nodes); ++i)
         free_clusters.push_back(new Cluster());
+    ett_nodes.sz = max_num_nodes;
 }
 
-template<typename v_t, typename e_t>
-UFOTree<v_t, e_t>::UFOTree(vertex_t n, QueryType q,
-        std::function<v_t(v_t, v_t)> f_v, std::function<e_t(e_t, e_t)> f_e,
-        v_t id_v, e_t id_e, v_t dval_v, e_t dval_e)
-    : query_type(q), f_v(f_v), f_e(f_e), identity_v(id_v), identity_e(id_e),
-     default_v(dval_v), default_e(dval_e) {
-    leaves.resize(n, default_v);
-    root_clusters.resize(max_tree_height(n));
-    for (int i = 0; i < n; ++i)
-        free_clusters.push_back(new Cluster());
-}
-
-template<typename v_t, typename e_t>
-UFOTree<v_t, e_t>::UFOTree(int n, QueryType q,
-        std::function<v_t(v_t, v_t)> f, v_t id, v_t d_val)
-    : query_type(q), f_v(f), identity_v(id), default_v(d_val) {
-    if constexpr (std::is_same<v_t,e_t>::value) {
-        f_e = f;
-        identity_e = id;
-        default_e = d_val;
-    }
-    leaves.resize(n, default_v);
-    root_clusters.resize(max_tree_height(n));
-    for (int i = 0; i < n; ++i)
-        free_clusters.push_back(new Cluster());
-}
-
-template<typename v_t, typename e_t>
-UFOTree<v_t, e_t>::~UFOTree() {
+template<typename SketchClass>
+CutsetUFOTree<SketchClass>::~CutsetUFOTree() {
     // Clear all memory
     std::unordered_set<Cluster*> clusters;
     for (auto leaf : leaves) {
@@ -198,8 +155,10 @@ UFOTree<v_t, e_t>::~UFOTree() {
     #endif
 }
 
-template<typename v_t, typename e_t>
-UFOCluster<v_t, e_t>* UFOTree<v_t, e_t>::allocate_cluster() {
+// --- Cluster allocation ---
+
+template<typename SketchClass>
+UFOCluster<SketchClass>* CutsetUFOTree<SketchClass>::allocate_cluster() {
     if (!free_clusters.empty()) {
         auto c = free_clusters.back();
         free_clusters.pop_back();
@@ -208,21 +167,25 @@ UFOCluster<v_t, e_t>* UFOTree<v_t, e_t>::allocate_cluster() {
     return new Cluster();
 }
 
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::free_cluster(UFOCluster<v_t, e_t>* c) {
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::free_cluster(UFOCluster<SketchClass>* c) {
     c->parent = nullptr;
+    c->center = nullptr;
     if (c->has_neighbor_set()) [[unlikely]] delete c->get_neighbor_set();
     for (int i = 0; i < UFO_ARRAY_MAX; ++i)
         c->neighbors[i] = nullptr;
     c->degree = 0;
     c->fanout = 0;
+    c->size = 0;
     free_clusters.push_back(c);
 }
 
-template<typename v_t, typename e_t>
-size_t UFOTree<v_t, e_t>::space() {
+// --- Space / stats helpers ---
+
+template<typename SketchClass>
+size_t CutsetUFOTree<SketchClass>::space() {
     std::unordered_set<Cluster*> visited;
-    size_t memory = sizeof(UFOTree<v_t, e_t>);
+    size_t memory = sizeof(CutsetUFOTree<SketchClass>);
     for (auto cluster : leaves) {
         memory += cluster.calculate_size();
         auto parent = cluster.parent;
@@ -235,8 +198,8 @@ size_t UFOTree<v_t, e_t>::space() {
     return memory;
 }
 
-template<typename v_t, typename e_t>
-size_t UFOTree<v_t, e_t>::count_nodes() {
+template<typename SketchClass>
+size_t CutsetUFOTree<SketchClass>::count_nodes() {
     std::unordered_set<Cluster*> visited;
     size_t node_count = 0;
     for(auto cluster : leaves){
@@ -251,8 +214,8 @@ size_t UFOTree<v_t, e_t>::count_nodes() {
     return node_count;
 }
 
-template<typename v_t, typename e_t>
-size_t UFOTree<v_t, e_t>::get_height() {
+template<typename SketchClass>
+size_t CutsetUFOTree<SketchClass>::get_height() {
     size_t max_height = 0;
     for (vertex_t v = 0; v < leaves.size(); ++v) {
         size_t height = 0;
@@ -266,11 +229,10 @@ size_t UFOTree<v_t, e_t>::get_height() {
     return max_height;
 }
 
-/* Link vertex u and vertex v in the tree. Optionally include an
-augmented value for the new edge (u,v). If no augmented value is
-provided, the default value is 1. */
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::link(vertex_t u, vertex_t v) {
+// --- Link / Cut / Connected ---
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::link(vertex_t u, vertex_t v) {
     assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
     assert(u != v && !connected(u,v));
     max_level = 0;
@@ -279,20 +241,9 @@ void UFOTree<v_t, e_t>::link(vertex_t u, vertex_t v) {
     insert_adjacency(&leaves[u], &leaves[v]);
     recluster_tree();
 }
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::link(vertex_t u, vertex_t v, e_t value) {
-    assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
-    assert(u != v && !connected(u,v));
-    max_level = 0;
-    remove_ancestors(&leaves[u]);
-    remove_ancestors(&leaves[v]);
-    insert_adjacency(&leaves[u], &leaves[v], value);
-    recluster_tree();
-}
 
-/* Cut vertex u and vertex v in the tree. */
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::cut(vertex_t u, vertex_t v) {
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::cut(vertex_t u, vertex_t v) {
     assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
     assert(leaves[u].contains_neighbor(&leaves[v]));
     max_level = 0;
@@ -316,10 +267,15 @@ void UFOTree<v_t, e_t>::cut(vertex_t u, vertex_t v) {
     recluster_tree();
 }
 
-/* Removes the ancestors of cluster c that are not high degree nor
-high fan-out and add them to root_clusters. */
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::remove_ancestors(Cluster* c, int start_level) {
+template<typename SketchClass>
+bool CutsetUFOTree<SketchClass>::connected(vertex_t u, vertex_t v) {
+    return leaves[u].get_root() == leaves[v].get_root();
+}
+
+// --- Remove ancestors ---
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
     int level = start_level; // level is always the level of cluster prev, 0 being the leaves
     auto prev = c;
     auto curr = c->parent;
@@ -380,8 +336,10 @@ void UFOTree<v_t, e_t>::remove_ancestors(Cluster* c, int start_level) {
     if (level > max_level) max_level = level;
 }
 
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::recluster_tree() {
+// --- Recluster tree ---
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::recluster_tree() {
     for (int level = 0; level <= max_level; level++) {
         if (root_clusters[level].empty()) [[unlikely]] continue;
         // Update root cluster stats if we are collecting them
@@ -396,11 +354,10 @@ void UFOTree<v_t, e_t>::recluster_tree() {
             if (!cluster->parent && cluster->get_degree() > 2) [[unlikely]] {
                 assert(cluster->get_degree() <= 5);
                 auto parent = allocate_cluster();
-                if constexpr (!std::is_same<e_t, empty_t>::value) {
-                    parent->value = identity_v;
-                }
                 parent->fanout = 1;
                 cluster->parent = parent;
+                parent->center = cluster; // high-degree cluster is the star center
+                parent->size += cluster->size; // accumulate child size
                 root_clusters[level+1].push_back(parent);
                 assert(UFO_ARRAY_MAX >= 3);
                 if (!cluster->has_neighbor_set()) [[likely]] {
@@ -419,14 +376,10 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
+                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
                         } else if (neighbor->parent) { // Populate new parent's neighbors
-                            if constexpr (std::is_same<e_t, empty_t>::value) {
-                                parent->insert_neighbor(neighbor->parent);
-                                neighbor->parent->insert_neighbor(parent);
-                            } else {
-                                parent->insert_neighbor_with_value(neighbor->parent, cluster->get_edge_value(i));
-                                neighbor->parent->insert_neighbor_with_value(parent, cluster->get_edge_value(i));
-                            }
+                            parent->insert_neighbor(neighbor->parent);
+                            neighbor->parent->insert_neighbor(parent);
                         }
                     }
                 } else [[unlikely]] {
@@ -445,18 +398,13 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
+                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
                         } else if (neighbor->parent) { // Populate new parent's neighbors
-                            if constexpr (std::is_same<e_t, empty_t>::value) {
-                                parent->insert_neighbor(neighbor->parent);
-                                neighbor->parent->insert_neighbor(parent);
-                            } else {
-                                parent->insert_neighbor_with_value(neighbor->parent, cluster->get_edge_value(i));
-                                neighbor->parent->insert_neighbor_with_value(parent, cluster->get_edge_value(i));
-                            }
+                            parent->insert_neighbor(neighbor->parent);
+                            neighbor->parent->insert_neighbor(parent);
                         }
                     }
-                    for (auto neighbor_pair : *cluster->get_neighbor_set()) {
-                        auto neighbor = neighbor_pair.first;
+                    for (auto neighbor : *cluster->get_neighbor_set()) {
                         if (neighbor->get_degree() == 1) [[unlikely]] {
                             auto curr = neighbor->parent;
                             int lev = level+1;
@@ -470,14 +418,10 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
+                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
                         } else if (neighbor->parent) { // Populate new parent's neighbors
-                            if constexpr (std::is_same<e_t, empty_t>::value) {
-                                parent->insert_neighbor(neighbor->parent);
-                                neighbor->parent->insert_neighbor(parent);
-                            } else {
-                                parent->insert_neighbor_with_value(neighbor->parent, neighbor_pair.second);
-                                neighbor->parent->insert_neighbor_with_value(parent, neighbor_pair.second);
-                            }
+                            parent->insert_neighbor(neighbor->parent);
+                            neighbor->parent->insert_neighbor(parent);
                         }
                     }
                 }
@@ -495,28 +439,17 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                         cluster->parent = parent;
                         neighbor->parent = parent;
                         parent->fanout = 2;
-                        if constexpr (!std::is_same<e_t, empty_t>::value) { // Path query
-                            parent->value = f_e(cluster->value, f_e(neighbor->value, cluster->get_edge_value(i)));
-                        }
+                        parent->center = cluster; // arbitrary choice for pair merge
+                        parent->size = cluster->size + neighbor->size; // sum both children
                         root_clusters[level+1].push_back(parent);
                         for (int i = 0; i < 2; ++i) { // Populate new parent's neighbors
                             if (cluster->neighbors[i]->parent && cluster->neighbors[i]->parent != parent) {
-                                if constexpr (std::is_same<e_t, empty_t>::value) {
-                                    parent->insert_neighbor(cluster->neighbors[i]->parent);
-                                    cluster->neighbors[i]->parent->insert_neighbor(parent);
-                                } else {
-                                    parent->insert_neighbor_with_value(cluster->neighbors[i]->parent, cluster->get_edge_value(i));
-                                    cluster->neighbors[i]->parent->insert_neighbor_with_value(parent, cluster->get_edge_value(i));
-                                }
+                                parent->insert_neighbor(cluster->neighbors[i]->parent);
+                                cluster->neighbors[i]->parent->insert_neighbor(parent);
                             }
                             if (neighbor->neighbors[i]->parent && neighbor->neighbors[i]->parent != parent) {
-                                if constexpr (std::is_same<e_t, empty_t>::value) {
-                                    parent->insert_neighbor(neighbor->neighbors[i]->parent);
-                                    neighbor->neighbors[i]->parent->insert_neighbor(parent);
-                                } else {
-                                    parent->insert_neighbor_with_value(neighbor->neighbors[i]->parent, neighbor->get_edge_value(i));
-                                    neighbor->neighbors[i]->parent->insert_neighbor_with_value(parent, neighbor->get_edge_value(i));
-                                }
+                                parent->insert_neighbor(neighbor->neighbors[i]->parent);
+                                neighbor->neighbors[i]->parent->insert_neighbor(parent);
                             }
                         }
                         break;
@@ -531,18 +464,12 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                             if (neighbor->contracts()) continue;
                             cluster->parent = neighbor->parent;
                             neighbor->parent->fanout++;
-                            if constexpr (!std::is_same<e_t, empty_t>::value) { // Path query
-                                cluster->parent->value = f_e(cluster->value, f_e(neighbor->value, cluster->get_edge_value(i)));
-                            }
+                            neighbor->parent->center = cluster; // update center to higher-degree node
+                            neighbor->parent->size += cluster->size; // accumulate new child's size
                             remove_ancestors(cluster->parent, level+1); // Recursive remove ancestor call
-                            auto other_neighbor = cluster->neighbors[!i]; // Popoulate neighbors
-                            // if (other_neighbor->parent && (long) other_neighbor->parent->parent != 1) {
+                            auto other_neighbor = cluster->neighbors[!i]; // Populate neighbors
                             if (other_neighbor->parent) {
-                                if constexpr (std::is_same<e_t, empty_t>::value) {
-                                    insert_adjacency(cluster->parent, other_neighbor->parent);
-                                } else {
-                                    insert_adjacency(cluster->parent, other_neighbor->parent, cluster->get_edge_value(!i));
-                                }
+                                insert_adjacency(cluster->parent, other_neighbor->parent);
                             }
                             break;
                         }
@@ -555,24 +482,19 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                     if (neighbor->get_degree() == 2 && neighbor->contracts()) continue;
                     cluster->parent = neighbor->parent;
                     neighbor->parent->fanout++;
+                    neighbor->parent->size += cluster->size; // accumulate new child's size
                     remove_ancestors(cluster->parent, level+1);
                 } else {
                     auto parent = allocate_cluster();
                     cluster->parent = parent;
                     neighbor->parent = parent;
                     parent->fanout = 2;
-                    if constexpr (!std::is_same<e_t, empty_t>::value) { // Path query
-                        parent->value = identity_v;
-                    }
+                    parent->center = neighbor; // neighbor has higher degree
+                    parent->size = cluster->size + neighbor->size; // sum both children
                     for (int i = 0; i < 2; ++i) { // Populate new parent's neighbors
                         if (neighbor->neighbors[i] && neighbor->neighbors[i] != cluster && neighbor->neighbors[i]->parent) {
-                            if constexpr (std::is_same<e_t, empty_t>::value) {
-                                parent->insert_neighbor(neighbor->neighbors[i]->parent);
-                                neighbor->neighbors[i]->parent->insert_neighbor(parent);
-                            } else {
-                                parent->insert_neighbor_with_value(neighbor->neighbors[i]->parent, neighbor->get_edge_value(i));
-                                neighbor->neighbors[i]->parent->insert_neighbor_with_value(parent, neighbor->get_edge_value(i));
-                            }
+                            parent->insert_neighbor(neighbor->neighbors[i]->parent);
+                            neighbor->neighbors[i]->parent->insert_neighbor(parent);
                         }
                     }
                     root_clusters[level+1].push_back(parent);
@@ -585,18 +507,12 @@ void UFOTree<v_t, e_t>::recluster_tree() {
                 auto parent = allocate_cluster();
                 cluster->parent = parent;
                 parent->fanout = 1;
-                if constexpr (!std::is_same<v_t, empty_t>::value) { // Path query
-                    parent->value = cluster->value;
-                }
+                parent->center = cluster;
+                parent->size = cluster->size; // single child
                 for (int i = 0; i < 2; ++i) { // Populate new parent's neighbors
                     if (cluster->neighbors[i] && cluster->neighbors[i]->parent) {
-                        if constexpr (std::is_same<e_t, empty_t>::value) {
-                            parent->insert_neighbor(cluster->neighbors[i]->parent);
-                            cluster->neighbors[i]->parent->insert_neighbor(parent);
-                        } else {
-                            parent->insert_neighbor_with_value(cluster->neighbors[i]->parent, cluster->get_edge_value(i));
-                            cluster->neighbors[i]->parent->insert_neighbor_with_value(parent, cluster->get_edge_value(i));
-                        }
+                        parent->insert_neighbor(cluster->neighbors[i]->parent);
+                        cluster->neighbors[i]->parent->insert_neighbor(parent);
                     }
                 }
                 root_clusters[level+1].push_back(parent);
@@ -608,8 +524,10 @@ void UFOTree<v_t, e_t>::recluster_tree() {
     }
 }
 
-template<typename v_t, typename e_t>
-bool UFOTree<v_t, e_t>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level) {
+// --- Helper functions ---
+
+template<typename SketchClass>
+bool CutsetUFOTree<SketchClass>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level) {
     int cluster_degree = cluster->degree > 0 ? cluster->degree : cluster->get_degree();
     if (cluster_degree > 2) [[unlikely]] return true;
     if (!child->neighbors[1] && cluster->fanout > 2) [[unlikely]] return true;
@@ -618,11 +536,8 @@ bool UFOTree<v_t, e_t>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster*
     return false;
 }
 
-/* Helper function which takes a cluster c and the level of that cluster. The function
-should find every cluster that shares a parent with c, disconnect it from their parent
-and add it as a root cluster to be processed. */
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::disconnect_siblings(Cluster* c, int level) {
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::disconnect_siblings(Cluster* c, int level) {
     if (c->get_degree() == 1) {
         auto center = c->neighbors[0];
         if (center->parent && c->parent != center->parent) return;
@@ -643,8 +558,7 @@ void UFOTree<v_t, e_t>::disconnect_siblings(Cluster* c, int level) {
                     root_clusters[level].push_back(neighbor); // Keep track of root clusters
                 }
             }
-            for (auto neighbor_pair : *center->get_neighbor_set()) {
-                Cluster* neighbor = neighbor_pair.first;
+            for (auto neighbor : *center->get_neighbor_set()) {
                 if (neighbor && neighbor->parent == c->parent && neighbor != c) {
                     neighbor->parent = nullptr; // Set sibling parent pointer to null
                     root_clusters[level].push_back(neighbor); // Keep track of root clusters
@@ -671,8 +585,7 @@ void UFOTree<v_t, e_t>::disconnect_siblings(Cluster* c, int level) {
                     root_clusters[level].push_back(neighbor); // Keep track of root clusters
                 }
             }
-            for (auto neighbor_pair : *c->get_neighbor_set()) {
-                Cluster* neighbor = neighbor_pair.first;
+            for (auto neighbor : *c->get_neighbor_set()) {
                 if (neighbor && neighbor->parent == c->parent) {
                     neighbor->parent = nullptr; // Set sibling parent pointer to null
                     root_clusters[level].push_back(neighbor); // Keep track of root clusters
@@ -682,8 +595,10 @@ void UFOTree<v_t, e_t>::disconnect_siblings(Cluster* c, int level) {
     }
 }
 
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::insert_adjacency(Cluster* u, Cluster* v) {
+// --- Adjacency helpers ---
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::insert_adjacency(Cluster* u, Cluster* v) {
     auto curr_u = u;
     auto curr_v = v;
     while (curr_u && curr_v && curr_u != curr_v) {
@@ -694,218 +609,30 @@ void UFOTree<v_t, e_t>::insert_adjacency(Cluster* u, Cluster* v) {
     }
 }
 
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::insert_adjacency(Cluster* u, Cluster* v, e_t value) {
-    auto curr_u = u;
-    auto curr_v = v;
-    while (curr_u && curr_v && curr_u != curr_v) {
-        curr_u->insert_neighbor_with_value(curr_v, value);
-        curr_v->insert_neighbor_with_value(curr_u, value);
-        curr_u = curr_u->parent;
-        curr_v = curr_v->parent;
-    }
-}
-
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::remove_adjacency(Cluster* u, Cluster* v) {
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::remove_adjacency(Cluster* u, Cluster* v) {
     auto curr_u = u;
     auto curr_v = v;
     while (curr_u && curr_v && curr_u != curr_v) {
         curr_u->remove_neighbor(curr_v);
         curr_v->remove_neighbor(curr_u);
-        // curr_u->degree = 0;
-        // curr_v->degree = 0;
         curr_u = curr_u->parent;
         curr_v = curr_v->parent;
     }
-}
-
-/* Return true if and only if there is a path from vertex u to
-vertex v in the tree. */
-template<typename v_t, typename e_t>
-bool UFOTree<v_t, e_t>::connected(vertex_t u, vertex_t v) {
-    return leaves[u].get_root() == leaves[v].get_root();
-}
-
-template<typename v_t, typename e_t>
-e_t UFOTree<v_t, e_t>::path_query(vertex_t u, vertex_t v) {
-    assert(u < leaves.size() && u >= 0 && v < leaves.size() && v >= 0 && u != v && connected(u, v)); 
-
-    e_t path_u1, path_u2, path_v1, path_v2;
-    path_u1 = path_u2 = path_v1 = path_v2 = identity_e;
-    Cluster *bdry_u1, *bdry_u2, *bdry_v1, *bdry_v2;
-    bdry_u1 = bdry_u2 = bdry_v1 = bdry_v2 = nullptr;
-    if (leaves[u].get_degree() == 2) {
-        bdry_u1 = leaves[u].neighbors[0];
-        bdry_u2 = leaves[u].neighbors[1];
-    }
-    if (leaves[v].get_degree() == 2) {
-        bdry_v1 = leaves[v].neighbors[0];
-        bdry_v2 = leaves[v].neighbors[1];
-    }
-    auto curr_u = &leaves[u];
-    auto curr_v = &leaves[v];
-    while (curr_u->parent != curr_v->parent) {
-        // NOTE(ATHARVA): Make this all into one function.
-        if (curr_u->get_degree() > 2) {
-            if (curr_u->parent->get_degree() == 2) {
-                // Superunary to Binary
-                bdry_u1 = curr_u->parent->neighbors[0];
-                bdry_u2 = curr_u->parent->neighbors[1];
-                path_u2 = path_u1;
-            }
-        } else {
-            for (int i = 0; i < 2; i++) {
-                auto neighbor = curr_u->neighbors[i];
-                if (neighbor && neighbor->parent == curr_u->parent) {
-                    if (curr_u->get_degree() == 2) {
-                        if (curr_u->parent->get_degree() == 2) {
-                            // Binary to Binary
-                            if (neighbor == bdry_u1) {
-                                path_u1 = f_e(path_u1, f_e(curr_u->get_edge_value(i), neighbor->value));
-                                bdry_u2 = bdry_u2->parent;
-                                for (int i = 0; i < 2; i++)
-                                    if (curr_u->parent->neighbors[i] && curr_u->parent->neighbors[i] != bdry_u2)
-                                        bdry_u1 = curr_u->parent->neighbors[i];
-                            } else {
-                                path_u2 = f_e(path_u2, f_e(curr_u->get_edge_value(i), neighbor->value));
-                                bdry_u1 = bdry_u1->parent;
-                                for (int i = 0; i < 2; i++)
-                                    if (curr_u->parent->neighbors[i] && curr_u->parent->neighbors[i] != bdry_u1)
-                                        bdry_u2 = curr_u->parent->neighbors[i];
-                            }
-                        } else {
-                            // Binary to Unary
-                            path_u1 = (neighbor == bdry_u1) ? path_u2 : path_u1;
-                        }
-                    } else {
-                        if (curr_u->parent->get_degree() == 2) {
-                            // Unary to Binary
-                            path_u1 = path_u2 = f_e(path_u1, curr_u->get_edge_value(i));
-                            bdry_u1 = curr_u->parent->neighbors[0];
-                            bdry_u2 = curr_u->parent->neighbors[1];
-                        } else {
-                            // Unary to Unary and Unary to Superunary
-                            path_u1 = f_e(path_u1, f_e(curr_u->get_edge_value(i), neighbor->value));
-                        }
-                    }
-                    break;
-                }
-            }
-            if (!curr_u->contracts()) {
-                if (bdry_u1) bdry_u1 = bdry_u1->parent;
-                if (bdry_u2) bdry_u2 = bdry_u2->parent;
-            }
-        }
-        curr_u = curr_u->parent;
-        // Same thing for the side of curr_v
-        if (curr_v->get_degree() > 2) {
-            if (curr_v->parent->get_degree() == 2) {
-                // Superunary to Superunary/Binary
-                bdry_v1 = curr_v->parent->neighbors[0];
-                bdry_v2 = curr_v->parent->neighbors[1];
-                path_v2 = path_v1;
-            }
-        } else {
-            for (int i = 0; i < 2; i++) {
-                auto neighbor = curr_v->neighbors[i];
-                if (neighbor && neighbor->parent == curr_v->parent) {
-                    if (curr_v->get_degree() == 2) {
-                        if (curr_v->parent->get_degree() == 2) {
-                            // Binary to Binary
-                            if (neighbor == bdry_v1) {
-                                path_v1 = f_e(path_v1, f_e(curr_v->get_edge_value(i), neighbor->value));
-                                bdry_v2 = bdry_v2->parent;
-                                for (int i = 0; i < 2; i++)
-                                    if (curr_v->parent->neighbors[i] && curr_v->parent->neighbors[i] != bdry_v2)
-                                        bdry_v1 = curr_v->parent->neighbors[i];
-                            } else {
-                                path_v2 = f_e(path_v2, f_e(curr_v->get_edge_value(i), neighbor->value));
-                                bdry_v1 = bdry_v1->parent;
-                                for (int i = 0; i < 2; i++)
-                                    if (curr_v->parent->neighbors[i] && curr_v->parent->neighbors[i] != bdry_v1)
-                                        bdry_v2 = curr_v->parent->neighbors[i];
-                            }
-                        } else {
-                            // Binary to Unary
-                            path_v1 = (neighbor == bdry_v1) ? path_v2 : path_v1;
-                        }
-                    } else {
-                        if (curr_v->parent->get_degree() == 2) {
-                            // Unary to Binary
-                            path_v1 = path_v2 = f_e(path_v1, curr_v->get_edge_value(i));
-                            bdry_v1 = curr_v->parent->neighbors[0];
-                            bdry_v2 = curr_v->parent->neighbors[1];
-                        } else {
-                            // Unary to Unary and Unary to Superunary
-                            path_v1 = f_e(path_v1, f_e(curr_v->get_edge_value(i), neighbor->value));
-                        }
-                    }
-                    break;
-                }
-            }
-            if (!curr_v->contracts()) {
-                if (bdry_v1) bdry_v1 = bdry_v1->parent;
-                if (bdry_v2) bdry_v2 = bdry_v2->parent;
-            }
-        }
-        curr_v = curr_v->parent;
-    }
-    // Get the correct path sides when the two vertices meet at the LCA
-    e_t total = identity_e;
-    if (curr_u->get_degree() == 2)
-        total = f_e(total, (curr_v == bdry_u1) ? path_u1 : path_u2);
-    else
-        total = f_e(total, path_u1);
-    if (curr_v->get_degree() == 2)
-        total = f_e(total, (curr_u == bdry_v1) ? path_v1 : path_v2);
-    else
-        total = f_e(total, path_v1);
-    // If the LCA contracts them in a star merge, take both edges to the center
-    if (curr_u->get_degree() == 1 && curr_v->get_degree() == 1
-    && curr_u->neighbors[0] != curr_v) [[unlikely]] {
-        total = f_e(total, curr_u->get_edge_value(0));
-        total = f_e(total, curr_v->get_edge_value(0));
-    }
-    // Add the value of the last edge (since they contract one must be deg <= 2)
-    else [[likely]] {
-        for (int i = 0; i < 2; i++) {
-            if (curr_u->neighbors[i] == curr_v) {
-                total = f_e(total, curr_u->get_edge_value(i));
-                break;
-            }
-            if (curr_v->neighbors[i] == curr_u) {
-                total = f_e(total, curr_v->get_edge_value(i));
-                break;
-            }
-        }
-    }
-    return total;
-}
-
-// --- Cutset-mode constructor ---
-template<typename v_t, typename e_t>
-UFOTree<v_t, e_t>::UFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed)
-    : query_type(CONNECTIVITY), tier_num_(tier_num), seed_(static_cast<size_t>(seed)) {
-    leaves.resize(max_num_nodes);
-    root_clusters.resize(max_tree_height(max_num_nodes));
-    for (int i = 0; i < static_cast<int>(max_num_nodes); ++i)
-        free_clusters.push_back(new Cluster());
-    ett_nodes.sz = max_num_nodes;
 }
 
 // --- Sketch update methods ---
 
-template<typename v_t, typename e_t>
-typename UFOTree<v_t, e_t>::Handle
-UFOTree<v_t, e_t>::update_sketch(node_id_t u, vec_t update_idx) {
+template<typename SketchClass>
+typename CutsetUFOTree<SketchClass>::Handle
+CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch(u, delta);
 }
 
-template<typename v_t, typename e_t>
-typename UFOTree<v_t, e_t>::Handle
-UFOTree<v_t, e_t>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
+template<typename SketchClass>
+typename CutsetUFOTree<SketchClass>::Handle
+CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta to leaf, then walk up parent chain merging into each ancestor
     Cluster* current = &leaves[u];
     current->sketch_agg.apply_entry_delta(delta);
@@ -916,16 +643,16 @@ UFOTree<v_t, e_t>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
     return current; // return root
 }
 
-template<typename v_t, typename e_t>
-typename UFOTree<v_t, e_t>::Handle
-UFOTree<v_t, e_t>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
+template<typename SketchClass>
+typename CutsetUFOTree<SketchClass>::Handle
+CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch_atomic(u, delta);
 }
 
-template<typename v_t, typename e_t>
-typename UFOTree<v_t, e_t>::Handle
-UFOTree<v_t, e_t>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
+template<typename SketchClass>
+typename CutsetUFOTree<SketchClass>::Handle
+CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta atomically to leaf, then walk up parent chain
     Cluster* current = &leaves[u];
     current->sketch_agg.atomic_apply_entry_delta(delta);
@@ -938,36 +665,93 @@ UFOTree<v_t, e_t>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &del
 
 // --- Component vertex enumeration ---
 
-template<typename v_t, typename e_t>
-std::vector<node_id_t> UFOTree<v_t, e_t>::get_component_vertices(node_id_t u) {
+template<typename SketchClass>
+std::vector<node_id_t> CutsetUFOTree<SketchClass>::get_component_vertices(node_id_t u) {
     Cluster* root = leaves[u].get_root();
     std::vector<node_id_t> vertices;
-    // Walk all leaves and check if they share the same root
-    for (size_t i = 0; i < leaves.size(); ++i) {
-        if (leaves[i].get_root() == root) {
-            vertices.push_back(static_cast<node_id_t>(i));
-        }
-    }
+    // Top-down traversal via center pointers: O(component_size)
+    walk_down_vertices(root, vertices);
     return vertices;
 }
 
 // --- Sketch aggregate recomputation ---
 
-template<typename v_t, typename e_t>
-void UFOTree<v_t, e_t>::recompute_component_sketch(Cluster* root) {
-    // Recompute root's sketch_agg by XOR-ing all leaf sketches in the component
-    // This is a full recomputation — used after structural changes (link/cut)
-    root->sketch_agg = DefaultSketchColumn();
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::recompute_component_sketch(Cluster* root) {
+    // Top-down traversal via center pointers: O(component_size)
+    root->sketch_agg = SketchClass();
     root->size = 0;
-    for (size_t i = 0; i < leaves.size(); ++i) {
-        if (leaves[i].get_root() == root) {
-            root->sketch_agg.merge(leaves[i].sketch_agg);
-            root->size++;
+    walk_down_recompute(root, root);
+}
+
+// --- Top-down traversal helpers ---
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::walk_down_recompute(Cluster* c, Cluster* root) {
+    if (c->center == nullptr) { // leaf cluster
+        root->sketch_agg.merge(c->sketch_agg);
+        root->size++;
+        return;
+    }
+    // Walk center child
+    walk_down_recompute(c->center, root);
+    // Walk siblings: center's neighbors whose parent is c
+    if (!c->center->has_neighbor_set()) [[likely]] {
+        for (auto neighborp : c->center->neighbors) {
+            auto neighbor = UNTAG(neighborp);
+            if (neighbor && neighbor->parent == c) {
+                walk_down_recompute(neighbor, root);
+            }
+        }
+    } else [[unlikely]] {
+        for (int i = 0; i < UFO_ARRAY_MAX-1; ++i) {
+            auto neighbor = c->center->neighbors[i];
+            if (neighbor && neighbor->parent == c) {
+                walk_down_recompute(neighbor, root);
+            }
+        }
+        auto& extra_neighbors = *(c->center->get_neighbor_set());
+        for (auto neighbor : extra_neighbors) {
+            if (neighbor && neighbor->parent == c) {
+                walk_down_recompute(neighbor, root);
+            }
+        }
+    }
+}
+
+template<typename SketchClass>
+void CutsetUFOTree<SketchClass>::walk_down_vertices(Cluster* c, std::vector<node_id_t>& vertices) {
+    if (c->center == nullptr) { // leaf cluster — find its index
+        size_t idx = static_cast<size_t>(c - &leaves[0]);
+        if (idx < leaves.size()) {
+            vertices.push_back(static_cast<node_id_t>(idx));
+        }
+        return;
+    }
+    walk_down_vertices(c->center, vertices);
+    if (!c->center->has_neighbor_set()) [[likely]] {
+        for (auto neighborp : c->center->neighbors) {
+            auto neighbor = UNTAG(neighborp);
+            if (neighbor && neighbor->parent == c) {
+                walk_down_vertices(neighbor, vertices);
+            }
+        }
+    } else [[unlikely]] {
+        for (int i = 0; i < UFO_ARRAY_MAX-1; ++i) {
+            auto neighbor = c->center->neighbors[i];
+            if (neighbor && neighbor->parent == c) {
+                walk_down_vertices(neighbor, vertices);
+            }
+        }
+        auto& extra_neighbors = *c->center->get_neighbor_set();
+        for (auto neighbor : extra_neighbors) {
+            if (neighbor && neighbor->parent == c) {
+                walk_down_vertices(neighbor, vertices);
+            }
         }
     }
 }
 
 }
 
-// Specialized UFO tree for cutset connectivity (no function pointer overhead)
-using CutsetUFOTree = ufo::UFOTree<DefaultSketchColumn, ufo::empty_t>;
+using CutsetUFOTree = ufo::CutsetUFOTree<DefaultSketchColumn>;

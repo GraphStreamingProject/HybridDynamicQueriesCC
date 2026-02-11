@@ -134,7 +134,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 				continue;
 
 			START(agg);
-			SkipListNode<SketchClass>* root = ett[tier].get_root(v);
+			Handle root = ett[tier].get_root(v);
 			root->process_updates();
 			SketchClass &ett_agg = root->sketch_agg;
 			STOP(ett_get_agg, agg);

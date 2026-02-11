@@ -223,16 +223,15 @@ requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 std::vector<std::set<node_id_t>> BatchTiers<TreeStrategy>::get_cc() {
     this->flush_buffer();
 	std::vector<std::set<node_id_t>> cc;
-	std::set<EulerTourNode<SketchClass>*> visited;
+	std::set<node_id_t> all_visited;
 	int top = ett.size()-1;
 	for (uint32_t i = 0; i < ett[top].ett_nodes.size(); i++) {
-        // TODO - this is simply incorrect with a hash map impl of ett_nodes
-		if (visited.find(&ett[top].ett_node(i)) == visited.end()) {
-			std::set<EulerTourNode<SketchClass>*> pointer_component = ett[top].ett_node(i).get_component();
+		if (all_visited.find(i) == all_visited.end()) {
+			std::vector<node_id_t> component_vec = ett[top].get_component_vertices(i);
 			std::set<node_id_t> component;
-			for (auto pointer : pointer_component) {
-				component.insert(pointer->vertex);
-				visited.insert(pointer);
+			for (auto v : component_vec) {
+				component.insert(v);
+				all_visited.insert(v);
 			}
 			cc.push_back(component);
 		}
@@ -358,7 +357,7 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_with_cas(const parlay::seque
                 size_t update_idx = src_sorted_update_idxs[i % num_updates];
                 GraphUpdate update = updates[update_idx];
                 const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.src, concat_pairing_fn(update.edge.src, update.edge.dst));
-                SkipListNode<SketchClass>* src_parent = ett[tier].ett_node(
+                Handle src_parent = ett[tier].ett_node(
                                                                      update.edge.src)
                                                             .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
                 typename BatchTiers<TreeStrategy>::Handle root = src_parent->find_root_with_cas();
@@ -375,7 +374,7 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_with_cas(const parlay::seque
                 GraphUpdate update = updates[update_idx];
 
                 const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.dst, concat_pairing_fn(update.edge.src, update.edge.dst));
-                SkipListNode<SketchClass>* dst_parent = ett[tier].ett_node(
+                Handle dst_parent = ett[tier].ett_node(
                                                                      update.edge.dst)
                                                             .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
                 typename BatchTiers<TreeStrategy>::Handle root = dst_parent->find_root_with_cas();
