@@ -30,8 +30,8 @@ static uint32_t compute_num_tiers(node_id_t node_count) {
     return std::max<uint32_t>(5, tiers);
 }
 
-// using GraphTierSystem = GraphTiers<DefaultSketchColumn>;
-using GraphTierSystem = BatchTiers<DefaultSketchColumn>;
+// using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
 
 auto start = std::chrono::high_resolution_clock::now();
 auto stop = std::chrono::high_resolution_clock::now();

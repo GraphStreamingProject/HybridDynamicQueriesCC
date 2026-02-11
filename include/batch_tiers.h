@@ -11,12 +11,18 @@
 #include "euler_tour_tree.h"
 // #include "link_cut_tree.h"
 #include "lct_v2.h"
+#include "cutset_data_structure.h"
+#include "ufo_tree/ufo_tree.h"
 #include "union_find_local.h"
 #include "sketchless_euler_tour_tree.h"
 // #include "parlay_hash/unordered_set.h"
 
-template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+// template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class BatchTiers {
+        using SketchClass = typename TreeStrategy::SketchType;
+        using Handle = typename TreeStrategy::Handle;
     private:
         size_t num_nodes;
         uint64_t seed;
@@ -28,7 +34,7 @@ class BatchTiers {
         // size_t maximum_batch_size = 1 << 14;
         // size_t maximum_batch_size = 1024;
         size_t granularity = 1 << 11;  // suggested number of tier-updates per thread 
-        std::vector<EulerTourTree<SketchClass>> ett;  // one ETT for each tier
+        std::vector<TreeStrategy> ett;  // one ETT for each tier
         LinkCutTreeMaxAgg<int8_t> link_cut_tree;
         SketchlessEulerTourTree<> query_ett;
         std::mutex lct_and_query_ett_lock;
@@ -45,23 +51,23 @@ class BatchTiers {
         // static thread_local parlay::sequence<ColumnEntryDelta> _deltas_buffer;
         // static thread_local SketchClass _scratch_sketch;
         // matrix of [num_tiers x ( batch_size * 2 )]
-        std::vector<parlay::sequence<SkipListNode<SketchClass>*>> _root_nodes;
+        std::vector<parlay::sequence<Handle>> _root_nodes;
         
         // jagged array: track isolated components/probably isolated components. 
         // why are we doing this instead of just using root_nodes?
         
         // a vector mapping each tier to the set of its components that need
         // to be checked for isolation
-        // parlay::sequence<parlay::sequence<SkipListNode<SketchClass>*>> _updated_components;
+        // parlay::sequence<parlay::sequence<Handle>> _updated_components;
         // TODO - see if we can get rid of redundant checks
         // and only do one PER component. ie if some components share the same
         // root, we need not check them.
-        // parlay::sequence<parlay::sequence<SkipListNode<SketchClass>*>> _updated_components;
+        // parlay::sequence<parlay::sequence<Handle>> _updated_components;
         parlay::sequence<parlay::sequence<node_id_t>> _updated_components;
         
         // tracks components that were already checked for isolation and had their
         // associated link/cut instructions logged.
-        // parlay::sequence<SkipListNode<SketchClass>*> _current_isolated_components;
+        // parlay::sequence<Handle> _current_isolated_components;
         
         // key: a root node ptr (to identify same component at current tier)
         // folly::ConcurrentHashMap<size_t, node_id_t> _already_checked_components;
@@ -161,7 +167,7 @@ class BatchTiers {
             }
         }
         size_t space_usage_bytes() {
-            size_t total = sizeof(BatchTiers<SketchClass>);
+            size_t total = sizeof(BatchTiers<TreeStrategy>);
             for (auto &tree: ett) {
                 total += tree.space_usage_bytes();
             }
@@ -187,7 +193,7 @@ class BatchTiers {
         
         
     private:
-        SkipListNode<SketchClass>*& root_node(size_t tier, size_t update_idx, bool src_or_dst) {
+        Handle& root_node(size_t tier, size_t update_idx, bool src_or_dst) {
             return _root_nodes[tier][update_idx * 2 + (src_or_dst ? 0 : 1)];
         };
         void _process_sketch_aggs_only(const parlay::sequence<GraphUpdate> &updates);

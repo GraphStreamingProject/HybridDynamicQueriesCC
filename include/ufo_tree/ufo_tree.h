@@ -2,8 +2,11 @@
 #include "ufo_tree/types.h"
 #include "ufo_tree/util.h"
 #include "ufo_tree/ufo_cluster.h"
+#include "sketch_interfacing.h"
+#include "types.h"
 #include <absl/container/flat_hash_set.h>
 #include <absl/container/flat_hash_map.h>
+#include <unordered_set>
 
 
 namespace ufo {
@@ -12,6 +15,10 @@ template<typename v_t, typename e_t>
 class UFOTree {
 using Cluster = UFOCluster<v_t, e_t>;
 public:
+    // --- CutsetDataStructure type aliases ---
+    using SketchType = DefaultSketchColumn;
+    using Handle = Cluster*;
+
     // UFO tree interface
     UFOTree(
         vertex_t n, QueryType q = CONNECTIVITY,
@@ -22,6 +29,10 @@ public:
         std::function<v_t(v_t, v_t)> f_v, std::function<e_t(e_t, e_t)> f_e,
         v_t id_v, e_t id_e, v_t dval_v, e_t dval_e);
     UFOTree(int n, QueryType q, std::function<v_t(v_t, v_t)> f, v_t id, v_t d_val);
+
+    // Cutset-mode constructor (no function pointers needed)
+    UFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed);
+
     ~UFOTree();
     void link(vertex_t u, vertex_t v);
     void link(vertex_t u, vertex_t v, e_t value);
@@ -34,6 +45,69 @@ public:
     size_t get_height();
     bool is_valid();
     void print_tree();
+
+    // --- CutsetDataStructure concept methods ---
+
+    // Connectivity
+    bool is_connected(node_id_t u, node_id_t v) {
+        return connected(static_cast<vertex_t>(u), static_cast<vertex_t>(v));
+    }
+    bool has_edge(node_id_t u, node_id_t v) {
+        return leaves[u].contains_neighbor(&leaves[v]);
+    }
+
+    // Sketch updates
+    Handle update_sketch(node_id_t u, vec_t update_idx);
+    Handle update_sketch(node_id_t u, const ColumnEntryDelta &delta);
+    Handle update_sketch_atomic(node_id_t u, vec_t update_idx);
+    Handle update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
+    ColumnEntryDelta generate_entry_delta(node_id_t u, vec_t update) {
+        return leaves[u].sketch_agg.generate_entry_delta(update);
+    }
+
+    // Querying
+    uint32_t get_size(node_id_t u) {
+        return get_root(u)->size;
+    }
+    node_id_t get_max_nodes() {
+        return static_cast<node_id_t>(leaves.size());
+    }
+    Handle get_root(node_id_t u) {
+        return leaves[u].get_root();
+    }
+    std::vector<node_id_t> get_component_vertices(node_id_t u);
+
+    // Maintenance
+    bool is_initialized(node_id_t u) {
+        return u < leaves.size();
+    }
+    void initialize_node(node_id_t u) {
+        // no-op: leaves are pre-allocated in constructor
+    }
+    void uninitialize_node(node_id_t u) {
+        // no-op for vector-based storage
+    }
+    void initialize_all_nodes() {
+        // no-op: leaves are pre-allocated in constructor
+    }
+    void initialize_all_nodes(node_id_t until) {
+        // no-op: leaves are pre-allocated in constructor
+    }
+    size_t space_usage_bytes() {
+        return space();
+    }
+
+    // Direct leaf access (mirrors ETT's ett_node for BatchTiers compatibility)
+    Cluster& ett_node(node_id_t u) {
+        return leaves[u];
+    }
+
+    // Container for BatchTiers compatibility (size query)
+    struct {
+        size_t sz = 0;
+        size_t size() const { return sz; }
+    } ett_nodes;
+
 private:
     // Class data and parameters
     std::vector<Cluster> leaves;
@@ -47,6 +121,9 @@ private:
     std::function<e_t(e_t, e_t)> f_e;
     e_t identity_e;
     e_t default_e;
+    uint32_t tier_num_ = 0;
+    size_t seed_ = 0;
+
     // We preallocate UFO clusters and store unused clusters in free_clusters
     std::vector<Cluster*> free_clusters;
     Cluster* allocate_cluster();
@@ -59,6 +136,9 @@ private:
     void insert_adjacency(Cluster* u, Cluster* v);
     void insert_adjacency(Cluster* u, Cluster* v, e_t value);
     void remove_adjacency(Cluster* u, Cluster* v);
+
+    // Sketch aggregate recomputation helpers
+    void recompute_component_sketch(Cluster* root);
 };
 
 template<typename v_t, typename e_t>
@@ -803,4 +883,91 @@ e_t UFOTree<v_t, e_t>::path_query(vertex_t u, vertex_t v) {
     return total;
 }
 
+// --- Cutset-mode constructor ---
+template<typename v_t, typename e_t>
+UFOTree<v_t, e_t>::UFOTree(node_id_t max_num_nodes, uint32_t tier_num, int seed)
+    : query_type(CONNECTIVITY), tier_num_(tier_num), seed_(static_cast<size_t>(seed)) {
+    leaves.resize(max_num_nodes);
+    root_clusters.resize(max_tree_height(max_num_nodes));
+    for (int i = 0; i < static_cast<int>(max_num_nodes); ++i)
+        free_clusters.push_back(new Cluster());
+    ett_nodes.sz = max_num_nodes;
 }
+
+// --- Sketch update methods ---
+
+template<typename v_t, typename e_t>
+typename UFOTree<v_t, e_t>::Handle
+UFOTree<v_t, e_t>::update_sketch(node_id_t u, vec_t update_idx) {
+    ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
+    return update_sketch(u, delta);
+}
+
+template<typename v_t, typename e_t>
+typename UFOTree<v_t, e_t>::Handle
+UFOTree<v_t, e_t>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
+    // Apply delta to leaf, then walk up parent chain merging into each ancestor
+    Cluster* current = &leaves[u];
+    current->sketch_agg.apply_entry_delta(delta);
+    while (current->parent != nullptr) {
+        current = current->parent;
+        current->sketch_agg.apply_entry_delta(delta);
+    }
+    return current; // return root
+}
+
+template<typename v_t, typename e_t>
+typename UFOTree<v_t, e_t>::Handle
+UFOTree<v_t, e_t>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
+    ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
+    return update_sketch_atomic(u, delta);
+}
+
+template<typename v_t, typename e_t>
+typename UFOTree<v_t, e_t>::Handle
+UFOTree<v_t, e_t>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
+    // Apply delta atomically to leaf, then walk up parent chain
+    Cluster* current = &leaves[u];
+    current->sketch_agg.atomic_apply_entry_delta(delta);
+    while (current->parent != nullptr) {
+        current = current->parent;
+        current->sketch_agg.atomic_apply_entry_delta(delta);
+    }
+    return current; // return root
+}
+
+// --- Component vertex enumeration ---
+
+template<typename v_t, typename e_t>
+std::vector<node_id_t> UFOTree<v_t, e_t>::get_component_vertices(node_id_t u) {
+    Cluster* root = leaves[u].get_root();
+    std::vector<node_id_t> vertices;
+    // Walk all leaves and check if they share the same root
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        if (leaves[i].get_root() == root) {
+            vertices.push_back(static_cast<node_id_t>(i));
+        }
+    }
+    return vertices;
+}
+
+// --- Sketch aggregate recomputation ---
+
+template<typename v_t, typename e_t>
+void UFOTree<v_t, e_t>::recompute_component_sketch(Cluster* root) {
+    // Recompute root's sketch_agg by XOR-ing all leaf sketches in the component
+    // This is a full recomputation — used after structural changes (link/cut)
+    root->sketch_agg = DefaultSketchColumn();
+    root->size = 0;
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        if (leaves[i].get_root() == root) {
+            root->sketch_agg.merge(leaves[i].sketch_agg);
+            root->size++;
+        }
+    }
+}
+
+}
+
+// Specialized UFO tree for cutset connectivity (no function pointer overhead)
+using CutsetUFOTree = ufo::UFOTree<DefaultSketchColumn, ufo::empty_t>;

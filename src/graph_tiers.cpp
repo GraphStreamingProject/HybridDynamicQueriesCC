@@ -21,8 +21,9 @@ long tiers_grown = 0;
 long normal_refreshes = 0;
 
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-GraphTiers<SketchClass>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_cut_tree(num_nodes) {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_cut_tree(num_nodes) {
 	// Algorithm parameters
 	uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
 
@@ -42,11 +43,13 @@ GraphTiers<SketchClass>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_c
 	root_nodes.resize(num_tiers*2);
 }
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-GraphTiers<SketchClass>::~GraphTiers() {}
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+GraphTiers<TreeStrategy>::~GraphTiers() {}
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void GraphTiers<SketchClass>::update(GraphUpdate update) {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 	edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
 	// Update the sketches of both endpoints of the edge in all tiers
 	if (update.type == DELETE && link_cut_tree.has_edge(update.edge.src, update.edge.dst)) {
@@ -74,8 +77,9 @@ void GraphTiers<SketchClass>::update(GraphUpdate update) {
 	STOP(refresh_time, ref);
 }
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void GraphTiers<SketchClass>::refresh(GraphUpdate update, bool did_cut) {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 	// In parallel check if all tiers are not isolated
 	START(iso);
 	std::atomic<bool> isolated(false);
@@ -196,18 +200,26 @@ void GraphTiers<SketchClass>::refresh(GraphUpdate update, bool did_cut) {
 	}
 }
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-std::vector<std::set<node_id_t>> GraphTiers<SketchClass>::get_cc() {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+std::vector<std::set<node_id_t>> GraphTiers<TreeStrategy>::get_cc() {
 	std::vector<std::set<node_id_t>> cc;
-	std::set<EulerTourNode<SketchClass>*> visited;
+    node_id_t n = ett[0].get_max_nodes();
+	std::vector<bool> visited(n, false);
 	int top = ett.size()-1;
-	for (uint32_t i = 0; i < ett[top].ett_nodes.size(); i++) {
-		if (visited.find(&ett[top].ett_node(i)) == visited.end()) {
-			std::set<EulerTourNode<SketchClass>*> pointer_component = ett[top].ett_node(i).get_component();
+	for (node_id_t i = 0; i < n; i++) {
+        // We only need to check one representative per component.
+		if (!visited[i]) {
+            // Check if initialized? ETT might be sparse?
+            // Assuming initialized or handled by get_component_vertices returning empty.
+            
+			std::vector<node_id_t> component_vec = ett[top].get_component_vertices(i);
+            if (component_vec.empty()) continue; // Handles uninitialized/empty
+            
 			std::set<node_id_t> component;
-			for (auto pointer : pointer_component) {
-				component.insert(pointer->vertex);
-				visited.insert(pointer);
+			for (auto v : component_vec) {
+				component.insert(v);
+                if (v < n) visited[v] = true;
 			}
 			cc.push_back(component);
 		}
@@ -215,9 +227,12 @@ std::vector<std::set<node_id_t>> GraphTiers<SketchClass>::get_cc() {
 	return cc;
 }
 
-template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool GraphTiers<SketchClass>::is_connected(node_id_t a, node_id_t b) {
+
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
 	return this->link_cut_tree.find_root(a) == this->link_cut_tree.find_root(b);
 }
 
-template class GraphTiers<DefaultSketchColumn>;
+template class GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+template class GraphTiers<CutsetUFOTree>;

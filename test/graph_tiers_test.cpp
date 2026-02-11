@@ -13,8 +13,8 @@
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
-// using GraphTierSystem = GraphTiers<DefaultSketchColumn>;
-using GraphTierSystem = BatchTiers<DefaultSketchColumn>;
+// using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
 
 auto start = std::chrono::high_resolution_clock::now();
 auto stop = std::chrono::high_resolution_clock::now();

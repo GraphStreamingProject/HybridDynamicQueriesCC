@@ -1,8 +1,11 @@
 #pragma once
 #include "ufo_tree/types.h"
 #include "ufo_tree/util.h"
+#include "sketch_interfacing.h"
 #include <absl/container/flat_hash_set.h>
 #include <absl/container/flat_hash_map.h>
+#include <atomic>
+#include <cassert>
 
 /* These constants determines the maximum size of array of nieghbors and
 the vector of neighbors for each UFOCluster. Any additional neighbors will
@@ -37,6 +40,12 @@ public:
     Cluster* neighbors[UFO_ARRAY_MAX];
     int degree = 0;
     int fanout = 0;
+
+    // --- Sketch aggregation support ---
+    DefaultSketchColumn sketch_agg;     // XOR aggregate of component subtree
+    uint32_t size = 1;                  // component size
+    int8_t needs_update = 0;            // CAS coordination flag (last for packing)
+
     // Constructors
     UFOCluster() : parent(), neighbors(), degree(), fanout(), edge_value1(), edge_value2(), edge_value3(), value() {};
     UFOCluster(v_t val) : parent(), neighbors(), degree(), fanout(), edge_value1(), edge_value2(), edge_value3(), value(val) {};
@@ -54,6 +63,35 @@ public:
     void set_edge_value(int index, e_t value);
     e_t get_edge_value(int index);
     size_t calculate_size();
+
+    // --- CAS-based aggregate coordination (mirrors SkipListNode pattern) ---
+    // Walk up parent chain, CAS-marking needs_update. Returns root if
+    // we successfully marked the full path; nullptr if another thread beat us.
+    Cluster* find_root_with_cas();
+    // Recompute sketch_agg top-down from children. fork_levels controls
+    // how many levels to fork parallel recomputation.
+    void recompute_aggs_topdown(int fork_levels);
+    // Recursively reset needs_update flags.
+    void clear_cas_flags();
+    // Flush buffered updates (no-op for UFO tree, kept for interface compat)
+    void process_updates() {};
+
+    // --- BatchTiers ETT-compatibility methods ---
+    // In ETT, get_allowed_caller() returns the SkipListNode* for the node.
+    // For UFO, the cluster itself IS the handle.
+    Cluster* get_allowed_caller() { return this; }
+
+    // Apply delta atomically up to `level` parent levels, return the last node touched.
+    // In ETT, this updates a few levels of skip list then lets CAS handle the rest.
+    Cluster* update_sketch_atomic_to_level(const ColumnEntryDelta &delta, uint32_t level) {
+        Cluster* current = this;
+        current->sketch_agg.atomic_apply_entry_delta(delta);
+        for (uint32_t i = 0; i < level && current->parent != nullptr; ++i) {
+            current = current->parent;
+            current->sketch_agg.atomic_apply_entry_delta(delta);
+        }
+        return current;
+    }
 };
 
 template<typename v_t, typename e_t>
@@ -224,6 +262,45 @@ size_t UFOCluster<v_t,e_t>::calculate_size() {
     size_t memory = sizeof(UFOCluster<v_t, e_t>);
     if (has_neighbor_set()) memory += get_neighbor_set()->bucket_count() * sizeof(std::pair<Cluster*, e_t>);
     return memory;
+}
+
+// --- CAS-based aggregate coordination ---
+
+template<typename v_t, typename e_t>
+UFOCluster<v_t, e_t>* UFOCluster<v_t, e_t>::find_root_with_cas() {
+    // Walk up the parent chain, CAS-marking needs_update at each cluster.
+    // If the CAS fails at any level, another thread is already handling this
+    // path, so we return nullptr.
+    Cluster* current = this;
+    while (current->parent != nullptr) {
+        current = current->parent;
+        std::atomic_ref<int8_t> atomic_needs_update(current->needs_update);
+        int8_t expected = 0; // NORMAL
+        bool cas_succeed = atomic_needs_update.compare_exchange_strong(
+            expected,
+            1, // NEEDS_UPDATE
+            std::memory_order_seq_cst
+        );
+        if (!cas_succeed) {
+            // Another thread already marked this node; stop.
+            return nullptr;
+        }
+    }
+    return current;
+}
+
+template<typename v_t, typename e_t>
+void UFOCluster<v_t, e_t>::recompute_aggs_topdown(int /*fork_levels*/) {
+    // For the UFO tree, we recompute sketch_agg by re-merging from leaf sketches.
+    // Since clusters don't have direct child pointers, we reset our own needs_update
+    // flag. The actual sketch recomputation is done via the tree-level recompute
+    // that walks the cluster hierarchy.
+    this->needs_update = 0;
+}
+
+template<typename v_t, typename e_t>
+void UFOCluster<v_t, e_t>::clear_cas_flags() {
+    this->needs_update = 0;
 }
 
 }

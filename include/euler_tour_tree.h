@@ -71,6 +71,14 @@ public:
   bool has_edge_to(EulerTourNode<SketchClass>* other);
 
   std::set<EulerTourNode<SketchClass>*> get_component();
+  std::vector<node_id_t> get_component_vertices() {
+      std::vector<node_id_t> component;
+      auto nodes = get_component();
+      for (auto node : nodes) {
+          component.push_back(node->vertex);
+      }
+      return component;
+  }
 
   long get_seed() {return seed;};
 
@@ -95,8 +103,11 @@ private:
 public:
   // std::vector<EulerTourNode<SketchClass>> ett_nodes;
   // absl::flat_hash_map<node_id_t, EulerTourNode<SketchClass>*> ett_nodes;
+  // Container ett_nodes;
   Container ett_nodes;
   
+  using Handle = SkipListNode<SketchClass>*;
+  using SketchType = SketchClass;
   
   EulerTourTree(node_id_t max_num_nodes, uint32_t tier_num, int seed);
 
@@ -151,6 +162,9 @@ public:
   void link(node_id_t u, node_id_t v);
   void cut(node_id_t u, node_id_t v);
   bool has_edge(node_id_t u, node_id_t v);
+  bool is_connected(node_id_t u, node_id_t v) {
+      return get_root(u) == get_root(v);
+  }
   SkipListNode<SketchClass>* update_sketch(node_id_t u, vec_t update_idx);
   SkipListNode<SketchClass>* update_sketch(node_id_t u, const ColumnEntryDelta &delta);
   SkipListNode<SketchClass>* update_sketch(node_id_t u, const ColumnEntryDeltas &deltas);
@@ -186,6 +200,9 @@ public:
     }
     return roots.size();
   }
+  node_id_t get_max_nodes() {
+      return max_num_nodes;
+  }
   size_t space_usage_bytes() {
     size_t total = 0;
     if constexpr (std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
@@ -208,6 +225,10 @@ public:
       total += root->compute_space_usage();
     }
     return total;
+  }
+
+  std::vector<node_id_t> get_component_vertices(node_id_t u) {
+      return ett_node(u).get_component_vertices();
   }
 };
   

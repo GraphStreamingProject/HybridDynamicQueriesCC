@@ -25,12 +25,20 @@ extern std::atomic<long> num_sketch_batches;
 
 // maintains the tiers of the algorithm
 // and the spanning forest of the entire graph
-template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+#include "cutset_data_structure.h"
+
+// maintains the tiers of the algorithm
+// and the spanning forest of the entire graph
+template <typename TreeStrategy>
+// template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class GraphTiers {
   // FRIEND_TEST(GraphTiersSuite, mini_correctness_test);
+  using SketchClass = typename TreeStrategy::SketchType;
+  using Handle = typename TreeStrategy::Handle;
 private:
-  std::vector<EulerTourTree<SketchClass>> ett;  // one ETT for each tier
-  std::vector<SkipListNode<SketchClass>*> root_nodes;
+  std::vector<TreeStrategy> ett;  // one ETT for each tier
+  std::vector<Handle> root_nodes;
   // LinkCutTreeMaxAgg<int8_t> link_cut_tree;
   LinkCutTree<> link_cut_tree;
   void refresh(GraphUpdate update, bool did_cut);
