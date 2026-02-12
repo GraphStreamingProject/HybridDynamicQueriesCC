@@ -89,6 +89,7 @@ add_executable(dynamicCC_tests
   test/euler_tour_tree_test.cpp
   test/link_cut_tree_test.cpp
   test/graph_tiers_test.cpp
+  test/ufo_tree_test.cpp
 
   src/skiplist.cpp
   src/euler_tour_tree.cpp
@@ -100,7 +101,7 @@ add_executable(dynamicCC_tests
 )
 target_include_directories(dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(dynamicCC_tests GraphZeppelinVerifyCC dycon)
-target_link_libraries(dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} TBB::tbb)
+target_link_libraries(dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} TBB::tbb parlay)
 
 target_compile_options(dynamicCC_tests PUBLIC -fopenmp)
 target_link_options(dynamicCC_tests PUBLIC -fopenmp)

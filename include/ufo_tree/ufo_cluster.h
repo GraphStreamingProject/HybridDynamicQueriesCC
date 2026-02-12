@@ -1,5 +1,5 @@
 #pragma once
-#include "ufo_tree/types.h"
+#include "ufo_tree/ufo_types.h"
 #include "ufo_tree/util.h"
 #include "sketch_interfacing.h"
 #include <absl/container/flat_hash_set.h>
@@ -18,9 +18,11 @@ function correctly. */
 #endif
 
 
+// extern vec_t sketch_len;
+
 namespace ufo {
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 class UFOCluster {
 using Cluster = UFOCluster<SketchClass>;
 using NeighborSet = absl::flat_hash_set<Cluster*>;
@@ -45,7 +47,9 @@ public:
     int8_t needs_update = 0;            // CAS coordination flag (last for packing)
 
     // Constructors
-    UFOCluster() : parent(), center(), neighbors(), degree(), fanout(), sketch_agg() {};
+    UFOCluster(uint64_t seed) : parent(nullptr), center(nullptr), neighbors(), degree(0), fanout(0), sketch_agg(SketchClass::suggest_capacity(sketch_len), seed) {
+        for(int i=0; i<UFO_ARRAY_MAX; ++i) neighbors[i] = nullptr;
+    };
     // Helper functions
     Cluster* get_root();
     bool contracts();
@@ -81,14 +85,14 @@ public:
     }
 };
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 UFOCluster<SketchClass>* UFOCluster<SketchClass>::get_root() {
     Cluster* curr = this;
     while (curr->parent) curr = curr->parent;
     return curr;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool UFOCluster<SketchClass>::contracts() {
     assert(get_degree() <= UFO_ARRAY_MAX);
     for (auto neighborp : neighbors) {
@@ -98,26 +102,26 @@ bool UFOCluster<SketchClass>::contracts() {
     return false;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 int UFOCluster<SketchClass>::get_degree() {
     int tag = GET_TAG(neighbors[UFO_ARRAY_MAX-1]);
     if (tag <= 3) [[likely]] return tag;
     return 2 + get_neighbor_set()->size();
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool UFOCluster<SketchClass>::has_neighbor_set() {
     int tag = GET_TAG(neighbors[UFO_ARRAY_MAX-1]);
     if (tag <= 3) [[likely]] return false;
     return true;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 absl::flat_hash_set<UFOCluster<SketchClass>*>* UFOCluster<SketchClass>::get_neighbor_set() {
     return (NeighborSet*) UNTAG(neighbors[UFO_ARRAY_MAX-1]);
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool UFOCluster<SketchClass>::parent_high_fanout() {
     assert(parent);
     int parent_degree = parent->get_degree();
@@ -131,14 +135,14 @@ bool UFOCluster<SketchClass>::parent_high_fanout() {
     return false;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool UFOCluster<SketchClass>::contains_neighbor(Cluster* c) {
     for (auto neighbor : neighbors) if (UNTAG(neighbor) == c) return true;
     if (has_neighbor_set() && get_neighbor_set()->find(c) != get_neighbor_set()->end()) return true;
     return false;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void UFOCluster<SketchClass>::insert_neighbor(Cluster* c) {
     assert(!contains_neighbor(c));
     for (int i = 0; i < UFO_ARRAY_MAX; ++i) {
@@ -157,7 +161,7 @@ void UFOCluster<SketchClass>::insert_neighbor(Cluster* c) {
     get_neighbor_set()->insert(c);
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void UFOCluster<SketchClass>::remove_neighbor(Cluster* c) {
     assert(contains_neighbor(c));
     for (int i = 0; i < UFO_ARRAY_MAX; ++i) {
@@ -195,7 +199,7 @@ void UFOCluster<SketchClass>::remove_neighbor(Cluster* c) {
     }
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 size_t UFOCluster<SketchClass>::calculate_size() {
     size_t memory = sizeof(UFOCluster<SketchClass>);
     if (has_neighbor_set()) memory += get_neighbor_set()->bucket_count() * sizeof(Cluster*);
@@ -204,7 +208,7 @@ size_t UFOCluster<SketchClass>::calculate_size() {
 
 // --- CAS-based aggregate coordination ---
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 UFOCluster<SketchClass>* UFOCluster<SketchClass>::find_root_with_cas() {
     Cluster* current = this;
     while (current->parent != nullptr) {
@@ -223,12 +227,12 @@ UFOCluster<SketchClass>* UFOCluster<SketchClass>::find_root_with_cas() {
     return current;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void UFOCluster<SketchClass>::recompute_aggs_topdown(int /*fork_levels*/) {
     this->needs_update = 0;
 }
 
-template<typename SketchClass>
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void UFOCluster<SketchClass>::clear_cas_flags() {
     this->needs_update = 0;
 }

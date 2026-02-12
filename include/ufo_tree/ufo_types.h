@@ -7,6 +7,7 @@ namespace ufo {
 
 typedef uint32_t vertex_t;
 static vertex_t NONE = -1;
+using node_id_t = vertex_t;
 
 struct empty_t {
 };

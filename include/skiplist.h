@@ -33,8 +33,7 @@ class EulerTourNode;
 
 extern long skiplist_seed;
 extern double height_factor;
-extern vec_t sketch_len;
-extern vec_t sketch_err;
+// extern vec_t sketch_len;
 
 template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class SkipListNode {

@@ -1,9 +1,10 @@
 #pragma once
+#include <iostream>
 #include <math.h>
 #include <parlay/parallel.h>
 #include <parlay/primitives.h>
 #include <parlay/sequence.h>
-#include "ufo_tree/types.h"
+#include "ufo_tree/ufo_types.h"
 
 
 namespace ufo {
