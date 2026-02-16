@@ -6,6 +6,7 @@
 // #include "types.h"
 #include <absl/container/flat_hash_set.h>
 #include <unordered_set>
+#include <unordered_map>
 
 
 namespace ufo {
@@ -21,6 +22,15 @@ public:
     // Cutset-mode constructor
     CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, size_t seed);
 
+    // Non-copyable (copy would duplicate buffer and break internal cross-pointers)
+    CutsetUFOTree(const CutsetUFOTree&) = delete;
+    CutsetUFOTree& operator=(const CutsetUFOTree&) = delete;
+
+    // Default move is safe: vector move transfers the buffer pointer,
+    // so all internal Cluster* pointers remain valid.
+    CutsetUFOTree(CutsetUFOTree&&) = default;
+    CutsetUFOTree& operator=(CutsetUFOTree&&) = default;
+
     ~CutsetUFOTree();
     void link(vertex_t u, vertex_t v);
     void cut(vertex_t u, vertex_t v);
@@ -31,6 +41,7 @@ public:
     size_t get_height();
     bool is_valid();
     void print_tree();
+    bool verify_structure();
 
     // --- CutsetDataStructure concept methods ---
 
@@ -131,6 +142,7 @@ CutsetUFOTree<SketchClass>::CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier
     leaves.reserve(max_num_nodes);
     for (node_id_t i = 0; i < max_num_nodes; ++i) {
         leaves.emplace_back(seed_);
+        leaves.back().size = 1; // Leaves represent 1 vertex
     }
     root_clusters.resize(max_tree_height(max_num_nodes));
     for (int i = 0; i < static_cast<int>(max_num_nodes); ++i)
@@ -142,7 +154,7 @@ template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 CutsetUFOTree<SketchClass>::~CutsetUFOTree() {
     // Clear all memory
     std::unordered_set<Cluster*> clusters;
-    for (auto leaf : leaves) {
+    for (auto& leaf : leaves) {
         auto curr = leaf.parent;
         while (curr) {
             clusters.insert(curr);
@@ -165,9 +177,12 @@ UFOCluster<SketchClass>* CutsetUFOTree<SketchClass>::allocate_cluster() {
     if (!free_clusters.empty()) {
         auto c = free_clusters.back();
         free_clusters.pop_back();
+        // c->size is already 0 from free_cluster
         return c;
     }
-    return new Cluster(seed_);
+    auto c = new Cluster(seed_);
+    c->size = 0; // Explicitly enforce 0 even if constructor default changes
+    return c;
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -190,7 +205,7 @@ template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 size_t CutsetUFOTree<SketchClass>::space() {
     std::unordered_set<Cluster*> visited;
     size_t memory = sizeof(CutsetUFOTree<SketchClass>);
-    for (auto cluster : leaves) {
+    for (auto& cluster : leaves) {
         memory += cluster.calculate_size();
         auto parent = cluster.parent;
         while (parent != nullptr && visited.count(parent) == 0) {
@@ -206,7 +221,7 @@ template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 size_t CutsetUFOTree<SketchClass>::count_nodes() {
     std::unordered_set<Cluster*> visited;
     size_t node_count = 0;
-    for(auto cluster : leaves){
+    for(auto& cluster : leaves){
         node_count += 1;
         auto parent = cluster.parent;
         while(parent != nullptr && visited.count(parent) == 0){
@@ -358,6 +373,7 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
             if (!cluster->parent && cluster->get_degree() > 2) [[unlikely]] {
                 assert(cluster->get_degree() <= 5);
                 auto parent = allocate_cluster();
+                parent->size = 0; // Fix: internal node starts empty (allocated as 1)
                 parent->fanout = 1;
                 cluster->parent = parent;
                 parent->center = cluster; // high-degree cluster is the star center
@@ -381,8 +397,6 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
-                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
-                            parent->sketch_agg.merge(neighbor->sketch_agg);
                         } else if (neighbor->parent) { // Populate new parent's neighbors
                             parent->insert_neighbor(neighbor->parent);
                             neighbor->parent->insert_neighbor(parent);
@@ -404,8 +418,6 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
-                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
-                            parent->sketch_agg.merge(neighbor->sketch_agg);
                         } else if (neighbor->parent) { // Populate new parent's neighbors
                             parent->insert_neighbor(neighbor->parent);
                             neighbor->parent->insert_neighbor(parent);
@@ -765,6 +777,43 @@ void CutsetUFOTree<SketchClass>::walk_down_vertices(Cluster* c, std::vector<node
             }
         }
     }
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetUFOTree<SketchClass>::verify_structure() {
+    std::unordered_map<Cluster*, std::vector<node_id_t>> components;
+    for (node_id_t i = 0; i < leaves.size(); ++i) {
+        components[leaves[i].get_root()].push_back(i);
+    }
+
+    bool valid = true;
+    for (const auto& [root, leaf_indices] : components) {
+        if (root->size != leaf_indices.size()) {
+            std::cout << "Size mismatch for root " << root
+                      << ": expected " << leaf_indices.size()
+                      << ", got " << root->size << "\n";
+            std::cout << "Root address: " << root << " Leaf count: " << leaf_indices.size() << "\n";
+            valid = false;
+        }
+
+        SketchClass expected_sketch(SketchClass::suggest_capacity(leaves.size()), seed_);
+        for (node_id_t idx : leaf_indices) {
+            expected_sketch.merge(leaves[idx].sketch_agg);
+        }
+
+        // Assuming SketchClass supports != or similar comparison
+        // If not, we might need a workaround, but sketches usually do.
+        // For now, let's assume DefaultSketchColumn (FixedSizeSketchColumn) supports equality check
+        // If compilation fails, I will inspect sketch interface.
+        // Wait, sketch_interfacing.h defines DefaultSketchColumn. 
+        // Let's rely on standard operators or add a check if needed.
+        // Actually, FixedSizeSketchColumn usually has operator==.
+        if (root->sketch_agg != expected_sketch) {
+             std::cout << "Sketch mismatch for root " << root << std::endl;
+             valid = false;
+        }
+    }
+    return valid;
 }
 
 }

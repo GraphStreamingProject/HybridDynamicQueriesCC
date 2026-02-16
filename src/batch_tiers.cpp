@@ -44,6 +44,8 @@ BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_n
     std::cout << "SEED: " << seed << std::endl;
     rng.seed(seed);
 	dist(rng); // To give 1:1 correspondence with MPI seeds
+	// Reserve capacity to prevent reallocation (which would invalidate internal pointers)
+	ett.reserve(num_tiers);
 	for (uint32_t i = 0; i < num_tiers; i++) {
 		int tier_seed = dist(rng);
 		ett.emplace_back(num_nodes, i, tier_seed);
@@ -81,6 +83,8 @@ BatchTiers<TreeStrategy>::BatchTiers(
     std::cout << "SEED: " << seed << std::endl;
     rng.seed(seed);
     dist(rng); // To give 1:1 correspondence with MPI seeds
+    // Reserve capacity to prevent reallocation (which would invalidate internal pointers)
+    ett.reserve(num_tiers);
     for (uint32_t i = 0; i < num_tiers; i++) {
         int tier_seed = dist(rng);
         ett.emplace_back(num_nodes, i, tier_seed);
@@ -141,8 +145,8 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     }
     // 1) Step 1: Process all sketch aggs in true batch parallel.
     // _process_sketch_aggs_only(updates);
-    // _process_sketch_aggs_tier_sequential(updates);
-    _process_sketch_aggs_with_cas(updates);
+    _process_sketch_aggs_tier_sequential(updates);
+    // _process_sketch_aggs_with_cas(updates);
     
     // 2) Step 2: Check for isolated components.
     uint32_t first_isolated_tier = _search_for_isolated_components(updates);
@@ -767,4 +771,4 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
 }
 
 template class BatchTiers<EulerTourTree<DefaultSketchColumn>>; 
-template class BatchTiers<CutsetUFOTree>;
+template class BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;

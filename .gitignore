@@ -3,3 +3,4 @@ results/
 *.swp
 .vscode/
 tags
+.cache/

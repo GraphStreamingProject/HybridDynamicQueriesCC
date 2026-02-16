@@ -49,7 +49,7 @@ static int max_tree_height(vertex_t n) {
 
 #define TAG(P,T) (Cluster*)((uintptr_t) P | (uintptr_t) T)
 #define UNTAG(P) (Cluster*)((uintptr_t) P & (uintptr_t) ~0x7)
-#define GET_TAG(P) (int)((uintptr_t) P & (uintptr_t) 0x7)
+#define GET_TAG(P) ((int)((uintptr_t) P & (uintptr_t) 0x7))
 
 // #define START_TIMER(X) auto X = std::chrono::high_resolution_clock::now()
 // #define STOP_TIMER(X, T) T += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-X).count()

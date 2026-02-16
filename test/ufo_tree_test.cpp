@@ -61,3 +61,32 @@ TEST(UFOTreeSuite, simple_link_cut_connectivity) {
     EXPECT_TRUE(ufo.is_connected(2, 3));
     EXPECT_FALSE(ufo.is_connected(0, 3));
 }
+
+TEST(UFOTreeSuite, stress_test_with_cuts) {
+  int nodecount = 100;
+  int n_ops = 2000;
+  sketch_len = nodecount;
+  int seed = time(NULL);
+  srand(seed);
+  std::cout << "Seeding stress test with cuts with " << seed << std::endl;
+  CutsetUFOTree ufo(nodecount, 1, seed);
+
+  for (int i = 0; i < n_ops; i++) {
+    int u = rand() % nodecount;
+    int v = rand() % nodecount;
+    if (u == v) continue;
+
+    if (ufo.is_connected(u, v)) {
+        if (ufo.has_edge(u, v)) {
+            ufo.cut(u, v);
+        }
+    } else {
+        ufo.link(u, v);
+    }
+    
+    if (i % 50 == 0) {
+        ASSERT_TRUE(ufo.verify_structure()) << "Structure invalid at step " << i;
+    }
+  }
+  ASSERT_TRUE(ufo.verify_structure()) << "Structure invalid at end";
+}

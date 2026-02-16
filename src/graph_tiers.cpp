@@ -35,6 +35,8 @@ GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_
     std::cout << "SEED: " << seed << std::endl;
     rng.seed(seed);
 	dist(rng); // To give 1:1 correspondence with MPI seeds
+	// Reserve capacity to prevent reallocation (which would invalidate internal pointers)
+	ett.reserve(num_tiers);
 	for (uint32_t i = 0; i < num_tiers; i++) {
 		int tier_seed = dist(rng);
 		ett.emplace_back(num_nodes, i, tier_seed);

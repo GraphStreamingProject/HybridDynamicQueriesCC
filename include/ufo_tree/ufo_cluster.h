@@ -18,8 +18,6 @@ function correctly. */
 #endif
 
 
-// extern vec_t sketch_len;
-
 namespace ufo {
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -32,18 +30,22 @@ public:
     // Center pointer: points to the "center" child cluster (hub of star-shaped merge).
     // Enables top-down traversal: from center, all other children are center->neighbors
     // filtered by parent == this. nullptr for leaf clusters.
+    // QDM: this is bad because of high fanout clusters
     Cluster* center = nullptr;
     /* We tag the last neighbor pointer in the array with information about the degree of the cluster.
     If it is 1, 2, or 3, that is the degree of the cluster. If it is 4, then the cluster has degree 4
     or higher and the last neighbor pointer is actually a pointer to the NeighborsSet object containing
     the remaining neighbors of the cluster. */
+    
+    // lowkey can just do this on the up for CAS recomputing
     Cluster* neighbors[UFO_ARRAY_MAX];
-    int degree = 0;
-    int fanout = 0;
+    // do we need degree and fanout?
+    uint32_t degree = 0;
+    uint32_t fanout = 0;
 
     // --- Sketch aggregation support ---
     SketchClass sketch_agg;             // aggregate of component subtree
-    uint32_t size = 1;                  // component size
+    uint32_t size = 0;                  // component size
     int8_t needs_update = 0;            // CAS coordination flag (last for packing)
 
     // Constructors
@@ -149,7 +151,7 @@ void UFOCluster<SketchClass>::insert_neighbor(Cluster* c) {
         if (UNTAG(neighbors[i]) == nullptr) [[likely]] {
             int deg = GET_TAG(neighbors[UFO_ARRAY_MAX-1]);
             neighbors[i] = c;
-            neighbors[UFO_ARRAY_MAX-1] = TAG(UNTAG(neighbors[UFO_ARRAY_MAX-1]), deg+1);
+            neighbors[UFO_ARRAY_MAX - 1] = TAG(UNTAG(neighbors[UFO_ARRAY_MAX - 1]), deg + 1);
             return;
         }
     }

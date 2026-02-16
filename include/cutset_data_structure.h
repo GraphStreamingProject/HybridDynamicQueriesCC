@@ -10,7 +10,7 @@ template <typename Handle, typename Sketch>
 concept TreeHandleConcept = requires(Handle h, const Sketch& s) {
     // Basic properties access
     { h->size } -> std::convertible_to<uint32_t>;
-    // { h->sketch_agg } -> std::convertible_to<Sketch>; // Direct access if possible, or use method
+    { h->sketch_agg } -> std::convertible_to<Sketch>; 
     
     // Check if the handle (node) has a non-empty sketch
     // { h->sketch_agg.sample() } -> std::same_as<SketchSample>; 

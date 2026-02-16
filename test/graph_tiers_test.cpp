@@ -7,6 +7,7 @@
 #include "graph_tiers.h"
 #include "batch_tiers.h"
 #include "binary_graph_stream.h"
+#include "ufo_tree/ufo_tree.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
 #include "util.h"
@@ -14,7 +15,8 @@
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 // using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
-using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
+// using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
+using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
 auto start = std::chrono::high_resolution_clock::now();
 auto stop = std::chrono::high_resolution_clock::now();
@@ -147,6 +149,10 @@ TEST(GraphTiersSuite, mini_correctness_test) {
 
 TEST(GraphTiersSuite, deletion_replace_correctness_test) {
     node_id_t numnodes = 50;
+    height_factor = 1 / log2(log2(numnodes));
+    sketch_len = Sketch::calc_vector_length(numnodes);
+    sketch_err = DEFAULT_SKETCH_ERR;
+
 	std::random_device dev;
     std::mt19937 rng(dev());
     std::uniform_int_distribution<std::mt19937::result_type> dist(0,MAX_INT);
