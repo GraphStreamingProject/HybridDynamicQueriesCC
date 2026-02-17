@@ -403,6 +403,9 @@ void CutsetUFOTree<SketchClass>::remove_ancestors_old(Cluster* c, int start_leve
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
+    // TODO - there is a pretty big 
+    // bug here. namely that we double subtract 
+    // contributions in many cases.
     int level = start_level; 
     Cluster *prev = c;
     Cluster *curr = c->parent;
@@ -496,7 +499,13 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 // BUT we wont be deleting it when it gets replaced
                 // or we reach the end of the loop
                 delete_to_subtract = false;
-
+                // HOWEVER, we also need to issue the following correction:
+                // when we subtract prev's contributions upstream,
+                // we need to add back the previous to_subtract's contributions
+                // in order to make sure we are getting everything. 
+                // but then at this level, it should exclude the previous
+                // to_delete.
+                // so this approach is also flawed
             } else {
                 // if we are not deleting prev, and not doing anything
                 // funky like disconnecting it from curr, then continue
