@@ -121,6 +121,7 @@ private:
     void free_cluster(Cluster* c);
     // Helper functions
     void remove_ancestors(Cluster* c, int start_level = 0);
+    void remove_ancestors_old(Cluster* c, int start_level = 0);
     void recluster_tree();
     bool is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level);
     void disconnect_siblings(Cluster* c, int level);
@@ -178,10 +179,14 @@ UFOCluster<SketchClass>* CutsetUFOTree<SketchClass>::allocate_cluster() {
         auto c = free_clusters.back();
         free_clusters.pop_back();
         // c->size is already 0 from free_cluster
+        // TODO - shouldn't need this.
+        c->sketch_agg.clear();
+        c->size = 0; // Explicitly enforce 0 even if free_cluster changes
         return c;
     }
     auto c = new Cluster(seed_);
     c->size = 0; // Explicitly enforce 0 even if constructor default changes
+    c->sketch_agg.clear(); // Explicitly clear even if constructor default changes
     return c;
 }
 
@@ -294,14 +299,16 @@ bool CutsetUFOTree<SketchClass>::connected(vertex_t u, vertex_t v) {
 // --- Remove ancestors ---
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
-    int level = start_level; // level is always the level of cluster prev, 0 being the leaves
+void CutsetUFOTree<SketchClass>::remove_ancestors_old(Cluster* c, int start_level) {
+    int level = start_level;  // level is always the level of cluster prev, 0 being the leaves
     auto prev = c;
     auto curr = c->parent;
     bool del = false;
+    Cluster* to_delete = nullptr;
     while (curr) {
         // Different cases for if curr will or will not be deleted later
-        if (!is_high_degree_or_high_fanout(curr, prev, level)) [[likely]] { // We will delete curr next round
+        if (!is_high_degree_or_high_fanout(curr, prev, level)) [[likely]] {
+            // We will delete curr next round
             disconnect_siblings(prev, level);
             if (del) [[likely]] { // Possibly delete prev
                 assert(prev->get_degree() <= UFO_ARRAY_MAX);
@@ -311,14 +318,27 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 }
                 auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
                 if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+                // if (to_delete) {
+                //     curr->size -= to_delete->size;
+                //     curr->sketch_agg.merge(to_delete->sketch_agg);
+                // }
                 free_cluster(prev);
             } else [[unlikely]] {
                 prev->parent = nullptr;
-                curr->fanout--;
+                // remove prev contributions
+                // curr->fanout--;
+                // curr->size -= prev->size;
+                // curr->sketch_agg.merge(prev->sketch_agg);
                 root_clusters[level].push_back(prev);
+                // If there's an existing to_delete, free it now since we're replacing it
+                if (to_delete) {
+                    free_cluster(to_delete);
+                }
+                to_delete = prev;
             }
             del = true;
-        } else [[unlikely]] { // We will not delete curr next round
+        } else [[unlikely]] { 
+            // We will not delete curr next round (because it is either high degree or high fanout)
             if (del) [[likely]] { // Possibly delete prev
                 assert(prev->get_degree() <= UFO_ARRAY_MAX);
                 for (auto neighborp : prev->neighbors) {
@@ -327,14 +347,26 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 }
                 auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
                 if (position != root_clusters[level].end()) root_clusters[level].erase(position);
-                free_cluster(prev);
+                // Subtract prev's contribution from surviving curr before freeing
+                // if (to_delete) {
+                //     prev->size -= to_delete->size;
+                //     prev->sketch_agg.merge(to_delete->sketch_agg);
+                // }
                 curr->fanout--;
+                curr->size -= prev->size;
+                curr->sketch_agg.merge(prev->sketch_agg);
+                free_cluster(prev);
             } else [[unlikely]] if (prev->get_degree() <= 1) {
                 prev->parent = nullptr;
                 curr->fanout--;
+                // Subtract prev's contribution from surviving curr
+                curr->size -= prev->size;
+                curr->sketch_agg.merge(prev->sketch_agg);
                 root_clusters[level].push_back(prev);
             }
             del = false;
+            // Don't free to_delete here - it's in root_clusters and will be reclustered
+            to_delete = nullptr;
         }
         // Update pointers
         prev = curr;
@@ -350,9 +382,154 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
         }
         auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
         if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+        // if (to_delete) {
+        //     prev->size -= to_delete->size;
+        //     prev->sketch_agg.merge(to_delete->sketch_agg);
+        //     // Last deletion: free to_delete since its contribution is absorbed into prev which is freed
+        //     free_cluster(to_delete);
+        // }
         free_cluster(prev);
-    } else [[unlikely]] root_clusters[level].push_back(prev);
+    } else [[unlikely]] {
+        if (to_delete) {
+            prev->size -= to_delete->size;
+            prev->sketch_agg.merge(to_delete->sketch_agg);
+            // Last deletion: free to_delete since its contribution is now in prev
+            free_cluster(to_delete);
+        }
+        root_clusters[level].push_back(prev);
+    }
     if (level > max_level) max_level = level;
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
+    int level = start_level; 
+    Cluster *prev = c;
+    Cluster *curr = c->parent;
+    Cluster *to_subtract= nullptr;
+    bool delete_prev = false;    
+    bool delete_to_subtract = false;
+    while (curr) {
+        // Different cases depending on whether curr will be deleted next
+        // step or not:
+        if (!is_high_degree_or_high_fanout(curr, prev, level)) [[likely]] {
+            // curr will be deleted next step,
+            // (which means we dont care about updating its aggs)
+            // so disconnect siblings:
+            disconnect_siblings(prev, level);
+            if (delete_prev) [[likely]] {
+                assert(prev->get_degree() <= UFO_ARRAY_MAX);
+                // we don't actually want to delete prev
+                // instantly, we just want to mark it as the next
+                // to_subtract
+                if (to_subtract) {
+                    // we can finally truly delete
+                    // the previous to_subtract, since this will now be
+                    // the thing we wish to xor out from curr in future
+                    // iterations
+                    if (delete_to_subtract) {
+                        free_cluster(to_subtract);
+                    }
+                    to_subtract = prev;
+                    delete_to_subtract = true;
+                }
+                // remove prev relative to this level,
+                // first removing from its former neighbors
+                for (auto neighborp : prev->neighbors) {
+                    auto neighbor = UNTAG(neighborp);
+                    if (neighbor) neighbor->remove_neighbor(prev); // Remove prev from adjacency
+                }
+                // then removing from root clusters if it's there
+                auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
+                if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+            } else [[unlikely]] {
+                // curr will be deleted next step, but
+                // prev is not supposed to be deleted next step.
+                // therefore, it simply becomes a root cluster:
+                prev->parent = nullptr;
+                root_clusters[level].push_back(prev);
+            }
+            // mark that we need to delete the future prev
+            delete_prev = true;
+        } else [[unlikely]] {
+            // we will not delete curr next round
+            // because it is either high degree or high fanout
+            // this does mean we need to update it's agg values
+            // 
+            if (delete_prev) [[likely]] {
+                assert(prev->get_degree() <= UFO_ARRAY_MAX);
+                if (to_subtract) {
+                    // if there was a previous to_subtract, we
+                    // "take over" for it as the highest descendent
+                    // to be subtracted. 
+                    if (delete_to_subtract) 
+                        free_cluster(to_subtract);
+                    to_subtract = prev;
+                    delete_to_subtract = true;
+                }
+                // remove prev relative to this level,
+                // first removing its neighbors
+                for (auto neighborp : prev->neighbors) {
+                    auto neighbor = UNTAG(neighborp);
+                    if (neighbor) neighbor->remove_neighbor(prev); // Remove prev from adjacency
+                }
+                // then removing from root clusters if it's there
+                auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
+                if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+            } else [[unlikely]] if (prev->get_degree() <= 1) {
+                // if we are not deleting prev
+                // BUT prev is now degree 1 or less
+                // AND we are not deleting curr,
+                
+                // disconnect it from curr and make it a root cluster
+                prev->parent = nullptr;
+                curr->fanout--;
+                root_clusters[level].push_back(prev);
+
+                // remove its sketch and size contribution from curr
+                curr->sketch_agg.merge(prev->sketch_agg);
+                curr->size -= prev->size;
+                
+                // for future nodes, it needs to be the 
+                // one that we subtract out of the aggregate:
+                to_subtract = prev;
+                // BUT we wont be deleting it when it gets replaced
+                // or we reach the end of the loop
+                delete_to_subtract = false;
+
+            } else {
+                // if we are not deleting prev, and not doing anything
+                // funky like disconnecting it from curr, then continue
+                // up the tree, but also fix the aggregates
+                if (to_subtract != nullptr) {
+                    curr->sketch_agg.merge(to_subtract->sketch_agg);
+                    curr->size -= to_subtract->size;
+                }
+            }
+            // we will not delete curr (the future prev) next round
+            delete_prev = false;
+        } 
+        // update pointers
+        prev = curr;
+        curr = prev->parent;
+        level++;
+    }
+    // do final deletion once curr is nullptr
+    if (delete_prev) [[likely]] {
+        assert(prev->get_degree() <= UFO_ARRAY_MAX);
+        for (auto neighborp : prev->neighbors) {
+            auto neighbor = UNTAG(neighborp);
+            if (neighbor) neighbor->remove_neighbor(prev); // Remove prev from adjacency
+        }
+        auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
+        if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+    } else [[unlikely]] {
+        root_clusters[level].push_back(prev);
+    }
+    if (to_subtract != nullptr && to_subtract != prev && delete_to_subtract) {
+        free_cluster(to_subtract);
+    }
+    this->max_level = std::max(this->max_level, level);
 }
 
 // --- Recluster tree ---
@@ -380,7 +557,7 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                 parent->size += cluster->size; // accumulate child size
                 parent->sketch_agg.merge(cluster->sketch_agg);
                 root_clusters[level+1].push_back(parent);
-                assert(UFO_ARRAY_MAX >= 3);
+                assert(UFO_ARRAY_MAX == 3);
                 if (!cluster->has_neighbor_set()) [[likely]] {
                     for (int i = 0; i < UFO_ARRAY_MAX; ++i) {
                         auto neighbor = UNTAG(cluster->neighbors[i]);
@@ -397,6 +574,11 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
+                            // added:
+                            // also update the aggregates:
+                            parent->size += neighbor->size;
+                            parent->sketch_agg.merge(neighbor->sketch_agg);
+
                         } else if (neighbor->parent) { // Populate new parent's neighbors
                             parent->insert_neighbor(neighbor->parent);
                             neighbor->parent->insert_neighbor(parent);
@@ -418,6 +600,9 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                             }
                             neighbor->parent = cluster->parent;
                             parent->fanout++;
+                            // added:
+                            parent->size += neighbor->size; // accumulate absorbed neighbor's size
+                            parent->sketch_agg.merge(neighbor->sketch_agg);
                         } else if (neighbor->parent) { // Populate new parent's neighbors
                             parent->insert_neighbor(neighbor->parent);
                             neighbor->parent->insert_neighbor(parent);
@@ -555,6 +740,7 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool CutsetUFOTree<SketchClass>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level) {
+    // if cluster has high degree (lots of neighbors at its level), or high fanout (many children), return true.
     int cluster_degree = cluster->degree > 0 ? cluster->degree : cluster->get_degree();
     if (cluster_degree > 2) [[unlikely]] return true;
     if (!child->neighbors[1] && cluster->fanout > 2) [[unlikely]] return true;
