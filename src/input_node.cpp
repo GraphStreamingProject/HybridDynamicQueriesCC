@@ -206,7 +206,7 @@ std::vector<std::set<node_id_t>> InputNode::cc_query() {
 void InputNode::end() {
     process_all_updates();
     // Tell all nodes the stream is over
-    update_buffer[0].end = true;
+    update_buffer[0].status = END;
     bcast(update_buffer, sizeof(UpdateMessage)*buffer_capacity, 0);
      std::cout << "======================= INPUT NODE ======================" << std::endl;
      std::cout << "Dynamic tree operations time (ms): " << dt_operation_time/1000 << std::endl;

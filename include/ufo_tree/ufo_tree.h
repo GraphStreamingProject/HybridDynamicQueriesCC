@@ -406,12 +406,21 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
     // TODO - there is a pretty big 
     // bug here. namely that we double subtract 
     // contributions in many cases.
+    assert(c != nullptr);
     int level = start_level; 
     Cluster *prev = c;
     Cluster *curr = c->parent;
-    Cluster *to_subtract= nullptr;
     bool delete_prev = false;    
-    bool delete_to_subtract = false;
+    // TODO - find a preallocated one that we can clear
+    SketchClass to_subtract = SketchClass(
+        SketchClass::suggest_capacity(sketch_len), seed_        
+    ); 
+    to_subtract.clear();
+    int32_t to_subtract_size = 0;
+    // TODO - double check this
+    // to_subtract.merge(prev->sketch_agg);
+    // to_subtract_size += prev->size;
+
     while (curr) {
         // Different cases depending on whether curr will be deleted next
         // step or not:
@@ -422,20 +431,6 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
             disconnect_siblings(prev, level);
             if (delete_prev) [[likely]] {
                 assert(prev->get_degree() <= UFO_ARRAY_MAX);
-                // we don't actually want to delete prev
-                // instantly, we just want to mark it as the next
-                // to_subtract
-                if (to_subtract) {
-                    // we can finally truly delete
-                    // the previous to_subtract, since this will now be
-                    // the thing we wish to xor out from curr in future
-                    // iterations
-                    if (delete_to_subtract) {
-                        free_cluster(to_subtract);
-                    }
-                    to_subtract = prev;
-                    delete_to_subtract = true;
-                }
                 // remove prev relative to this level,
                 // first removing from its former neighbors
                 for (auto neighborp : prev->neighbors) {
@@ -445,6 +440,7 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 // then removing from root clusters if it's there
                 auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
                 if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+                free_cluster(prev);
             } else [[unlikely]] {
                 // curr will be deleted next step, but
                 // prev is not supposed to be deleted next step.
@@ -454,6 +450,16 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
             }
             // mark that we need to delete the future prev
             delete_prev = true;
+            // also, we should now use this as our base aggregate:
+            // to_subtract.clear();
+            // to_subtract.merge(curr->sketch_agg);
+            // to_subtract_size = curr->size;
+            // may as well change the aggregates the way we would if it werne't being deleted:
+            curr->sketch_agg.merge(to_subtract);
+            curr->size -= to_subtract_size;
+            to_subtract.merge(curr->sketch_agg);
+            to_subtract_size += curr->size;
+
         } else [[unlikely]] {
             // we will not delete curr next round
             // because it is either high degree or high fanout
@@ -461,15 +467,6 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
             // 
             if (delete_prev) [[likely]] {
                 assert(prev->get_degree() <= UFO_ARRAY_MAX);
-                if (to_subtract) {
-                    // if there was a previous to_subtract, we
-                    // "take over" for it as the highest descendent
-                    // to be subtracted. 
-                    if (delete_to_subtract) 
-                        free_cluster(to_subtract);
-                    to_subtract = prev;
-                    delete_to_subtract = true;
-                }
                 // remove prev relative to this level,
                 // first removing its neighbors
                 for (auto neighborp : prev->neighbors) {
@@ -479,6 +476,13 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 // then removing from root clusters if it's there
                 auto position = std::find(root_clusters[level].begin(), root_clusters[level].end(), prev);
                 if (position != root_clusters[level].end()) root_clusters[level].erase(position);
+
+                curr->sketch_agg.merge(to_subtract);
+                curr->size -= to_subtract_size;
+                // but we don't need to update to_subtract for curr, because we won't be deleting curr next round:
+                // to_subtract.merge(curr->sketch_agg);
+                // to_subtract_size += curr->size;
+
             } else [[unlikely]] if (prev->get_degree() <= 1) {
                 // if we are not deleting prev
                 // BUT prev is now degree 1 or less
@@ -488,32 +492,29 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
                 prev->parent = nullptr;
                 curr->fanout--;
                 root_clusters[level].push_back(prev);
-
-                // remove its sketch and size contribution from curr
-                curr->sketch_agg.merge(prev->sketch_agg);
-                curr->size -= prev->size;
                 
-                // for future nodes, it needs to be the 
-                // one that we subtract out of the aggregate:
-                to_subtract = prev;
-                // BUT we wont be deleting it when it gets replaced
-                // or we reach the end of the loop
-                delete_to_subtract = false;
-                // HOWEVER, we also need to issue the following correction:
-                // when we subtract prev's contributions upstream,
-                // we need to add back the previous to_subtract's contributions
-                // in order to make sure we are getting everything. 
-                // but then at this level, it should exclude the previous
-                // to_delete.
-                // so this approach is also flawed
+                // we also need to remove its contribution from curr
+                // (and all upstream)
+                
+                // actually - 
+
+                to_subtract_size += prev->size;
+                to_subtract.merge(prev->sketch_agg);
+
+                curr->size -= to_subtract_size;
+                curr->sketch_agg.merge(to_subtract);
+                
+                // but we arent deleting curr, so nothing else to do.
+                
             } else {
                 // if we are not deleting prev, and not doing anything
                 // funky like disconnecting it from curr, then continue
                 // up the tree, but also fix the aggregates
-                if (to_subtract != nullptr) {
-                    curr->sketch_agg.merge(to_subtract->sketch_agg);
-                    curr->size -= to_subtract->size;
-                }
+                curr->sketch_agg.merge(to_subtract);
+                curr->size -= to_subtract_size;
+                // but we don't need ot update to_subtract for curr:
+                // to_subtract.merge(curr->sketch_agg);
+                // to_subtract_size += curr->size;
             }
             // we will not delete curr (the future prev) next round
             delete_prev = false;
@@ -534,9 +535,8 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
         if (position != root_clusters[level].end()) root_clusters[level].erase(position);
     } else [[unlikely]] {
         root_clusters[level].push_back(prev);
-    }
-    if (to_subtract != nullptr && to_subtract != prev && delete_to_subtract) {
-        free_cluster(to_subtract);
+        // prev->sketch_agg.merge(to_subtract);
+        // prev->size -= to_subtract_size;
     }
     this->max_level = std::max(this->max_level, level);
 }

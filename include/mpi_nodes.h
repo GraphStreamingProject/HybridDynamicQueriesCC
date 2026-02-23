@@ -2,6 +2,7 @@
 
 #include <mpi.h>
 #include <queue>
+#include <cstdint>
 
 #include "types.h"
 #include "euler_tour_tree.h"
@@ -18,9 +19,11 @@ enum TreeOperationType {
   NOT_ISOLATED=0, ISOLATED=1, EMPTY, LINK, CUT, LCT_QUERY, MAXIMIZED
 };
 
+enum UpdateStatus : uint8_t { NORMAL = 0, END = 1 };
+
 typedef struct {
   GraphUpdate update;
-  bool end = false;
+  UpdateStatus status = NORMAL;
 } UpdateMessage;
 
 typedef struct {
