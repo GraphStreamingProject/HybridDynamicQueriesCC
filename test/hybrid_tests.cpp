@@ -337,6 +337,9 @@ TEST(GraphTierSuite, hybrid_memory_test) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
                 // std::cout << "Memory usage: " << hybrid_manager.cf_algo.getMemUsage() / 1000000 << std::endl;
                 std::cout << "Sketched nodes: " << hybrid_manager.num_sketched_vertices() << " out of " << num_nodes << std::endl;
+                std::cout << "--- SPACE_REPORT operation=" << i << " ---" << std::endl;
+                hybrid_manager.sketching_algo.report_space_usage_tsv(std::cout);
+                std::cout << "--- END_SPACE_REPORT ---" << std::endl;
             if (i%20000000 == 0 || i == edgecount-1) {
                 std::cout << "Sketched nodes: " << hybrid_manager.sketched_node_count() << " out of " << stream.nodes() << std::endl;
                 std::cout << "-  Space usage of CF: " << hybrid_manager.get_space_usage_cf()/(1024*1024) << " MB" << std::endl;

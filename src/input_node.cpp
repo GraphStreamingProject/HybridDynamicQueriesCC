@@ -206,10 +206,44 @@ std::vector<std::set<node_id_t>> InputNode::cc_query() {
 void InputNode::end() {
     process_all_updates();
     // Tell all nodes the stream is over
-    update_buffer[0].status = END;
+    update_buffer[0].status = UPDATE_END;
     bcast(update_buffer, sizeof(UpdateMessage)*buffer_capacity, 0);
      std::cout << "======================= INPUT NODE ======================" << std::endl;
      std::cout << "Dynamic tree operations time (ms): " << dt_operation_time/1000 << std::endl;
      std::cout << "Normal refreshes: " << normal_refreshes << std::endl;
      std::cout << "Number of updates: " << num_updates << std::endl;
+}
+
+std::vector<SpaceReportMessage> InputNode::report_space_usage() {
+    process_all_updates();
+    // Tell all tier nodes to report their space usage
+    update_buffer[0].status = UPDATE_SPACE_REPORT;
+    bcast(update_buffer, sizeof(UpdateMessage)*buffer_capacity, 0);
+    // Reset status so normal processing can continue
+    update_buffer[0].status = UPDATE_NORMAL;
+
+    // Collect space reports from each tier node (ranks 1..num_tiers)
+    std::vector<SpaceReportMessage> reports(num_tiers);
+    for (uint32_t i = 0; i < num_tiers; i++) {
+        MPI_Recv(&reports[i], sizeof(SpaceReportMessage), MPI_BYTE,
+                 i + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+    return reports;
+}
+
+void InputNode::report_space_usage_tsv(std::ostream& out) {
+    std::vector<SpaceReportMessage> reports = report_space_usage();
+    out << "tier\tspace_bytes\tnum_components" << std::endl;
+    size_t total = 0;
+    for (const auto& r : reports) {
+        out << r.tier_num << "\t" << r.space_bytes << "\t" << r.num_components << std::endl;
+        total += r.space_bytes;
+    }
+    out << "total\t" << total << "\t-" << std::endl;
+}
+
+void InputNode::report_space_usage_tsv(const std::string& file_path) {
+    std::ofstream ofs(file_path);
+    report_space_usage_tsv(ofs);
+    ofs.close();
 }

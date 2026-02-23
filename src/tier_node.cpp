@@ -30,7 +30,7 @@ void TierNode::main() {
     while (true) {
         // Receive a batch of updates and check if it is the end of stream
         bcast(update_buffer, sizeof(UpdateMessage)*(batch_size+1), 0);
-        if (update_buffer[0].end) {
+        if (update_buffer[0].status == UPDATE_END) {
             std::cout << "============= TIER " << tier_num << " NODE =============" << std::endl 
             << "Number of components: " << ett.num_components() << std::endl;
             // std::cout << "Greedy batch time (ms): " << greedy_batch_time/1000 << std::endl;
@@ -41,6 +41,15 @@ void TierNode::main() {
             // std::cout << "Normal refresh time (ms): " << normal_refresh_time/1000 << std::endl;
             std::cout << "\tSpace used (MB): " << ett.space_usage_bytes() / (1024.0 * 1024.0) << std::endl;
             return;
+        }
+        if (update_buffer[0].status == UPDATE_SPACE_REPORT) {
+            // Compute space usage and component count for this tier's ETT
+            SpaceReportMessage report;
+            report.tier_num = tier_num;
+            report.space_bytes = ett.space_usage_bytes();
+            report.num_components = ett.num_components();
+            MPI_Send(&report, sizeof(SpaceReportMessage), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+            continue;
         }
         uint32_t num_updates = update_buffer[0].update.edge.src;
         using_sliding_window = (bool)update_buffer[0].update.edge.dst;

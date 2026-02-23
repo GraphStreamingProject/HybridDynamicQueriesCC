@@ -162,6 +162,7 @@ TEST(GraphTierSuite, mpi_memory_measure_test) {
         long edgecount = stream.edges();
         // long count = 100000000;
         // edgecount = std::min(edgecount, count);
+        int max_maximal_tier = -1;
         auto X = std::chrono::high_resolution_clock::now();
         for (long i = 0; i < edgecount; i++) {
             // Read an update from the stream and have the input node process it
@@ -169,12 +170,38 @@ TEST(GraphTierSuite, mpi_memory_measure_test) {
             input_node.update(update);
             unlikely_if(i%1000000 == 0 || i == edgecount-1) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
+                auto reports = input_node.report_space_usage();
+                // Print TSV
+                std::cout << "--- SPACE_REPORT operation=" << i << " ---" << std::endl;
+                std::cout << "tier\tspace_bytes\tnum_components" << std::endl;
+                size_t total_bytes = 0;
+                for (const auto& r : reports) {
+                    std::cout << r.tier_num << "\t" << r.space_bytes << "\t" << r.num_components << std::endl;
+                    total_bytes += r.space_bytes;
+                }
+                std::cout << "total\t" << total_bytes << "\t-" << std::endl;
+                std::cout << "--- END_SPACE_REPORT ---" << std::endl;
+                // Find first maximal tier: first tier i where tier i+1 has the same component count
+                int first_maximal_tier = -1;
+                for (size_t t = 0; t + 1 < reports.size(); t++) {
+                    if (reports[t].num_components == reports[t + 1].num_components) {
+                        first_maximal_tier = (int)reports[t].tier_num;
+                        break;
+                    }
+                }
+                if (first_maximal_tier > max_maximal_tier) {
+                    max_maximal_tier = first_maximal_tier;
+                }
+            }
+            if (i == edgecount-1) {
+                std::cout << "Maximal tier across stream samples: " << max_maximal_tier << std::endl;
             }
         }
         // Communicate to all other nodes that the stream has ended
         input_node.end();
         auto time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - X).count();
         std::cout << "Total time(ms): " << (time/1000) << std::endl;
+        std::cout << "Max maximal tier across stream: " << max_maximal_tier << std::endl;
 
         std::ofstream file;
         file.open ("./../results/mpi_memory_results.txt", std::ios_base::app);

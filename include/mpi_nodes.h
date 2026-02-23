@@ -3,6 +3,10 @@
 #include <mpi.h>
 #include <queue>
 #include <cstdint>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "types.h"
 #include "euler_tour_tree.h"
@@ -19,11 +23,11 @@ enum TreeOperationType {
   NOT_ISOLATED=0, ISOLATED=1, EMPTY, LINK, CUT, LCT_QUERY, MAXIMIZED
 };
 
-enum UpdateStatus : uint8_t { NORMAL = 0, END = 1 };
+enum UpdateStatus : uint8_t { UPDATE_NORMAL = 0, UPDATE_END = 1, UPDATE_SPACE_REPORT = 2 };
 
 typedef struct {
   GraphUpdate update;
-  UpdateStatus status = NORMAL;
+  UpdateStatus status = UPDATE_NORMAL;
 } UpdateMessage;
 
 typedef struct {
@@ -59,6 +63,12 @@ typedef struct {
   uint32_t size1 = 0;
   uint32_t size2 = 0;
 } GreedyRefreshMessage;
+
+typedef struct {
+  uint32_t tier_num = 0;
+  size_t space_bytes = 0;
+  size_t num_components = 0;
+} SpaceReportMessage;
 
 class InputNode {
   node_id_t num_nodes;
@@ -102,6 +112,24 @@ public:
   bool connectivity_query(node_id_t a, node_id_t b);
   std::vector<std::set<node_id_t>> cc_query();
   void end();
+
+  /**
+   * Triggers a space report from all TierNodes.
+   * Returns a vector of (tier_num, space_bytes, num_components) per tier.
+   */
+  std::vector<SpaceReportMessage> report_space_usage();
+
+  /**
+   * Triggers a space report and writes it as a TSV to the given output stream.
+   * Columns: tier\tspace_bytes\tnum_components
+   * The last row is "total\t<sum_bytes>\t-".
+   */
+  void report_space_usage_tsv(std::ostream& out);
+
+  /**
+   * Convenience: triggers a space report and writes TSV to the given file path.
+   */
+  void report_space_usage_tsv(const std::string& file_path);
 
   void flush_transaction_log() {
     transaction_log.clear();
