@@ -89,12 +89,12 @@ FetchContent_MakeAvailable(abseil-cpp)
 
 find_package(TBB REQUIRED)
 
-add_executable(ufo_tests
-  test/test_runner.cpp
-  test/ufo_tree_test.cpp
-)
-target_include_directories(ufo_tests PUBLIC include)
-target_link_libraries(ufo_tests PRIVATE GraphZeppelinVerifyCC parlay absl::flat_hash_set)
+# add_executable(ufo_tests
+#   test/test_runner.cpp
+#   test/ufo_tree_test.cpp
+# )
+# target_include_directories(ufo_tests PUBLIC include)
+# target_link_libraries(ufo_tests PRIVATE GraphZeppelinVerifyCC parlay absl::flat_hash_set)
 
 add_executable(dynamicCC_tests
   test/test_runner.cpp

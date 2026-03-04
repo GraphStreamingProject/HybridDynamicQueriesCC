@@ -12,27 +12,13 @@
 
 
 // Define sketch_len for linking (extern in ufo_cluster.h)
-// vec_t sketch_len; // Defined in skiplist.cpp
+extern vec_t sketch_len; // Defined in skiplist.cpp
 
-TEST(UFOTreeSuite, stress_test) {
-  int nodecount = 1000;
-  int n = 100000;
-  sketch_len = nodecount; // Initialize sketch_len
-  int seed = time(NULL);
-  srand(seed);
-  std::cout << "Seeding stress test with " << seed << std::endl;
-  CutsetUFOTree ufo(nodecount, 1, seed); // Added required tier_num and seed arguments
+extern int command_line_n;
+extern int command_line_k;
+extern int command_line_num_trials;
+extern long command_line_seed;
 
-  for (int i = 0; i < n; i++) {
-    int a = rand() % nodecount, b = rand() % nodecount;
-    if (a == b) continue;
-    // Simple random link attempts. UFO handles existing connections gracefully? 
-    // Assuming yes for now, similar to ETT.
-    if (!ufo.is_connected(a, b)) {
-        ufo.link(a, b);
-    }
-  }
-}
 
 TEST(UFOTreeSuite, simple_link_cut_connectivity) {
     sketch_len = 10; // Initialize sketch_len
@@ -62,31 +48,70 @@ TEST(UFOTreeSuite, simple_link_cut_connectivity) {
     EXPECT_FALSE(ufo.is_connected(0, 3));
 }
 
-TEST(UFOTreeSuite, stress_test_with_cuts) {
-  int nodecount = 100;
-  int n_ops = 2000;
+TEST(UFOTreeSuite, stress_test) {
+  srand(time(NULL));
+  int num_trials = command_line_num_trials == 0 ? 1 : command_line_num_trials;
+  int nodecount = command_line_n == 0 ? 1000 : command_line_n;
+  int n_ops = command_line_k == 0 ? 2000 : command_line_k;
   sketch_len = nodecount;
-  int seed = time(NULL);
-  srand(seed);
-  std::cout << "Seeding stress test with cuts with " << seed << std::endl;
-  CutsetUFOTree ufo(nodecount, 1, seed);
 
-  for (int i = 0; i < n_ops; i++) {
-    int u = rand() % nodecount;
-    int v = rand() % nodecount;
-    if (u == v) continue;
+  std::cout << "Running " << num_trials << " trials." << std::endl;
 
-    if (ufo.is_connected(u, v)) {
-        if (ufo.has_edge(u, v)) {
-            ufo.cut(u, v);
-        }
-    } else {
-        ufo.link(u, v);
-    }
+  for (int trial = 0; trial < num_trials; ++trial) {
+    int current_seed = command_line_seed == -1 ? rand() : command_line_seed;
+    srand(current_seed);
+    std::cout << "Trial " << trial + 1 << "/" << num_trials 
+              << " - Seeding stress test with " << current_seed << std::endl;
     
-    if (i % 50 == 0) {
-        ASSERT_TRUE(ufo.verify_structure()) << "Structure invalid at step " << i;
+    // Initialize a fresh tree for this trial
+    CutsetUFOTree ufo(nodecount, 1, current_seed);
+
+    for (int i = 0; i < n_ops; i++) {
+      int a = rand() % nodecount, b = rand() % nodecount;
+      if (a == b) continue;
+      // Simple random link attempts. UFO handles existing connections gracefully? 
+      // Assuming yes for now, similar to ETT.
+      if (!ufo.is_connected(a, b)) {
+          ufo.link(a, b);
+      }
     }
   }
-  ASSERT_TRUE(ufo.verify_structure()) << "Structure invalid at end";
+}
+
+TEST(UFOTreeSuite, stress_test_with_cuts) {
+  srand(time(NULL));
+  int num_trials = command_line_num_trials == 0 ? 1 : command_line_num_trials;
+  int nodecount = command_line_n == 0 ? 1000 : command_line_n;
+  int n_ops = command_line_k == 0 ? 2000 : command_line_k;
+  sketch_len = nodecount;
+
+  std::cout << "Running " << num_trials << " trials." << std::endl;
+  std::cout << "n: " << nodecount << std::endl;
+  std::cout << "n_ops: " << n_ops << std::endl;
+
+  for (int trial = 0; trial < num_trials; ++trial) {
+    int current_seed = command_line_seed == -1 ? rand() : command_line_seed;
+    srand(current_seed);
+    std::cout << "Trial " << trial + 1 << " seed: " << current_seed << std::endl;
+    
+    // Initialize a fresh tree for this trial
+    CutsetUFOTree ufo(nodecount, 1, current_seed);
+
+    for (int i = 0; i < n_ops; i++) {
+      int u = rand() % nodecount;
+      int v = rand() % nodecount;
+      if (u == v) continue;
+
+      if (ufo.is_connected(u, v)) {
+          if (ufo.has_edge(u, v)) {
+              ufo.cut(u, v);
+          }
+      } else {
+          ufo.link(u, v);
+      }
+      
+      ASSERT_TRUE(ufo.verify_structure()) << "Trial " << trial + 1 << " structure invalid at step " << i;
+    }
+    // ufo.print_tree();
+  }
 }

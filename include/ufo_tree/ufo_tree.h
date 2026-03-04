@@ -9,8 +9,6 @@
 #include <unordered_map>
 
 
-vec_t sketch_len;
-
 namespace ufo {
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -124,6 +122,7 @@ private:
     // Helper functions
     void remove_ancestors(Cluster* c, int start_level = 0);
     void remove_ancestors_old(Cluster* c, int start_level = 0);
+    void add_to_ancestors(Cluster* c, Cluster* child);
     void recluster_tree();
     bool is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level);
     void disconnect_siblings(Cluster* c, int level);
@@ -701,9 +700,8 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
                     if (neighbor->get_degree() == 2 && neighbor->contracts()) continue;
                     cluster->parent = neighbor->parent;
                     neighbor->parent->fanout++;
-                    neighbor->parent->size += cluster->size; // accumulate new child's size
-                    neighbor->parent->sketch_agg.merge(cluster->sketch_agg);
                     remove_ancestors(cluster->parent, level+1);
+                    add_to_ancestors(cluster->parent, cluster);
                 } else {
                     auto parent = allocate_cluster();
                     cluster->parent = parent;
@@ -744,6 +742,16 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
         // Clear the contents of this level
         root_clusters[level].clear();
         if (level == max_level && !root_clusters[max_level+1].empty()) max_level++;
+    }
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass>::add_to_ancestors(Cluster* c, Cluster* child) {
+    auto curr = c;
+    while (curr) {
+        curr->size += child->size;
+        curr->sketch_agg.merge(child->sketch_agg);
+        curr = curr->parent;
     }
 }
 
@@ -1011,6 +1019,46 @@ bool CutsetUFOTree<SketchClass>::verify_structure() {
         }
     }
     return valid;
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass>::print_tree() {
+    std::multimap<Cluster*, Cluster*> clusters;
+    std::multimap<Cluster*, Cluster*> next_clusters;
+    std::cout << "========================= LEAVES =========================" << std::endl;
+    std::unordered_map<Cluster*, vertex_t> vertex_map;
+    for (int i = 0; i < this->leaves.size(); i++) vertex_map.insert({&leaves[i], i});
+    for (int i = 0; i < this->leaves.size(); i++) clusters.insert({leaves[i].parent, &leaves[i]});
+    for (auto entry : clusters) {
+        auto leaf = entry.second;
+        auto parent = entry.first;
+        std::cout << "VERTEX " << vertex_map[leaf] << "\t " << leaf << " Parent " << parent << " Neighbors: ";
+        if (!leaf->has_neighbor_set()) {
+            for (auto neighbor : leaf->neighbors) if (UNTAG(neighbor)) std::cout << vertex_map[UNTAG(neighbor)] << " ";
+        } else {
+            for (int i = 0; i < UFO_ARRAY_MAX-1; ++i) std::cout << vertex_map[leaf->neighbors[i]] << " ";
+            for (auto neighbor : *leaf->get_neighbor_set()) std::cout << vertex_map[neighbor] << " ";
+        }
+        std::cout << std::endl;
+        bool in_map = false;
+        for (auto entry : next_clusters) if (entry.second == parent) in_map = true;
+        if (parent && !in_map) next_clusters.insert({parent->parent, parent});
+    }
+    clusters.swap(next_clusters);
+    next_clusters.clear();
+    while (!clusters.empty()) {
+        std::cout << "======================= NEXT LEVEL =======================" << std::endl;
+        for (auto entry : clusters) {
+            auto cluster = entry.second;
+            auto parent = entry.first;
+            std::cout << "Cluster: " << cluster << " Parent: " << parent << std::endl;
+            bool in_map = false;
+            for (auto entry : next_clusters) if (entry.second == parent) in_map = true;
+            if (parent && !in_map) next_clusters.insert({parent->parent, parent});
+        }
+        clusters.swap(next_clusters);
+        next_clusters.clear();
+    }
 }
 
 }
