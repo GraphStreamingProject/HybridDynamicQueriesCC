@@ -9,6 +9,8 @@
 #include <unordered_map>
 
 
+vec_t sketch_len;
+
 namespace ufo {
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)

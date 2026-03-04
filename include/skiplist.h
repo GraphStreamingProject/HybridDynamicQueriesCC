@@ -13,9 +13,7 @@ using ColumnEntryDeltas = parlay::sequence<ColumnEntryDelta>::view_type;
 
 
 
-#ifndef SKETCH_BUFFER_SIZE
-  #define SKETCH_BUFFER_SIZE 25
-#endif
+#define SKETCH_BUFFER_SIZE 25
 
 enum AggUpdateState {
     NORMAL = 0,

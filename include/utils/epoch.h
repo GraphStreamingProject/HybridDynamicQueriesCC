@@ -155,11 +155,11 @@ struct alignas(64) epoch_s {
     size_t current_e = ((1ul << 48) - 1) & current_state;
     size_t workers = num_workers();
     if (i == workers) {
-      for (const auto h : before_epoch_hooks) h();
+      for (const auto& h : before_epoch_hooks) h();
       long tmp = current_e;
       if (current_epoch.load() == current_e &&
 	  current_epoch.compare_exchange_strong(tmp, current_e+1)) {
-	for (const auto h : after_epoch_hooks) h();
+	for (const auto& h : after_epoch_hooks) h();
       }
       state new_state = current_e + 1;
       epoch_state.compare_exchange_strong(current_state, new_state);
@@ -194,9 +194,9 @@ struct alignas(64) epoch_s {
     } while (num_workers() != workers); // this is unlikely to loop
 
     // if so then increment current epoch
-    for (const auto h : before_epoch_hooks) h();
+    for (const auto& h : before_epoch_hooks) h();
     if (current_epoch.compare_exchange_strong(current_e, current_e+1)) {
-      for (const auto h : after_epoch_hooks) h();
+      for (const auto& h : after_epoch_hooks) h();
     }
   }
 };

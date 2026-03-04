@@ -40,7 +40,9 @@ inline ET AtomicExchange(ET *ptr, ET val) {
 
 #define MAX_VERTEX_T (std::numeric_limits<uint32_t>::max())
 
-#define VERTICES_TO_EDGE(U, V) (edge_t) U + (((edge_t) V) << 32)
+// #ifndef VERTICES_TO_EDGE
+// #define VERTICES_TO_EDGE(U, V) (edge_t) U + (((edge_t) V) << 32)
+// #endif
 #define EDGE_TYPE_TO_STRUCT(E) {(vertex_t) E, (vertex_t) (E >> 32)}
 
 static int max_tree_height(vertex_t n) {
