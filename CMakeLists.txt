@@ -103,6 +103,7 @@ add_executable(dynamicCC_tests
   test/link_cut_tree_test.cpp
   test/graph_tiers_test.cpp
   test/ufo_tree_test.cpp
+  test/lct_cutset_test.cpp
 
   src/skiplist.cpp
   src/euler_tour_tree.cpp

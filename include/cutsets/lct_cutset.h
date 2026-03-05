@@ -19,8 +19,9 @@ public:
     
     void link(vertex_t u, vertex_t v);
     void cut(vertex_t u, vertex_t v);
-    bool connected(vertex_t u, vertex_t v);
+    bool is_connected(vertex_t u, vertex_t v);
 
+    bool verify_structure();
 private:
     uint64_t seed;
     std::vector<Node<SketchClass>> verts;
@@ -43,15 +44,44 @@ void CutsetLCT<SketchClass>::cut(vertex_t u, vertex_t v) {
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetLCT<SketchClass>::connected(vertex_t u, vertex_t v) {
+bool CutsetLCT<SketchClass>::is_connected(vertex_t u, vertex_t v) {
     return verts[u].get_representative() == verts[v].get_representative();
 }
 
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass>::verify_structure() {
+    std::unordered_map<Node<SketchClass>*, std::vector<node_id_t>> components;
+    for (node_id_t i = 0; i < verts.size(); ++i) {
+        components[verts[i].get_representative()].push_back(i);
+    }
+
+    bool valid = true;
+    for (const auto& [root, leaf_indices] : components) {
+        if (root->weight != leaf_indices.size()) {
+            std::cout << "Size mismatch for root " << root
+                      << ": expected " << leaf_indices.size()
+                      << ", got " << root->weight << "\n";
+            std::cout << "Root address: " << root << " Leaf count: " << leaf_indices.size() << "\n";
+            valid = false;
+        }
+
+        SketchClass expected_sketch(SketchClass::suggest_capacity(verts.size()), seed);
+        for (node_id_t idx : leaf_indices) {
+            expected_sketch.merge(verts[idx].sketch_agg);
+        }
+        if (root->sketch_agg != expected_sketch) {
+             std::cout << "Sketch mismatch for root " << root << std::endl;
+             valid = false;
+        }
+    }
+    return valid;
+}
 
 
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 class Node {
+friend class CutsetLCT<SketchClass>;
 public:
     Node(uint64_t seed);
     Node* get_root();
@@ -134,15 +164,13 @@ void Node<SketchClass>::splay() {
 // Guarantees that `this` is the root of the splay tree, and the flip bit is false.
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void Node<SketchClass>::expose() {
-    Node* prev = nullptr;
     Node* curr = this;
     while (curr != nullptr) {
         curr->splay();
-        // If there is a previous child, subtract its values.
-        // Add the values of the new child.
-        curr->children[1] = prev;
-        this->splay();
-        prev = this;
+        if (curr != this) {
+            curr->children[1] = this;
+            this->splay();
+        } else curr->children[1] = nullptr;
         curr = this->parent;
     }
 }
