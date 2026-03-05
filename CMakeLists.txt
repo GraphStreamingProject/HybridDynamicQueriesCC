@@ -104,7 +104,7 @@ add_executable(dynamicCC_tests
   test/graph_tiers_test.cpp
   test/ufo_tree_test.cpp
   test/lct_cutset_test.cpp
-  test/cutset_memory_benchmark.cpp
+  test/cutset_benchmarks.cpp
 
   src/skiplist.cpp
   src/euler_tour_tree.cpp
