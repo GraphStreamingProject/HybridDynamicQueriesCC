@@ -1,6 +1,6 @@
 #pragma once
-#include "ufo_tree/ufo_types.h"
-#include "ufo_tree/util.h"
+#include "cutsets/ufo_types.h"
+#include "cutsets/util.h"
 #include "sketch_interfacing.h"
 #include <absl/container/flat_hash_set.h>
 #include <atomic>

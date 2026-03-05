@@ -4,7 +4,7 @@
 #include <parlay/parallel.h>
 #include <parlay/primitives.h>
 #include <parlay/sequence.h>
-#include "ufo_tree/ufo_types.h"
+#include "cutsets/ufo_types.h"
 
 
 namespace ufo {

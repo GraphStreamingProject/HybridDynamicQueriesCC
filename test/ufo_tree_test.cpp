@@ -5,7 +5,7 @@
 
 #include <gtest/gtest.h>
 
-#include "ufo_tree/ufo_tree.h"
+#include "cutsets/ufo_cutset.h"
 
 
 // using namespace ufo;

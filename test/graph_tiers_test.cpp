@@ -7,7 +7,7 @@
 #include "graph_tiers.h"
 #include "batch_tiers.h"
 #include "binary_graph_stream.h"
-#include "ufo_tree/ufo_tree.h"
+#include "cutsets/ufo_cutset.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
 #include "util.h"

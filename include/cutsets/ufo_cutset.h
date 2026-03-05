@@ -1,7 +1,7 @@
 #pragma once
-#include "ufo_types.h"
-#include "ufo_tree/util.h"
-#include "ufo_tree/ufo_cluster.h"
+#include "cutsets/lct_cutset.h"
+#include "cutsets/util.h"
+#include "cutsets/ufo_cluster.h"
 #include "sketch_interfacing.h"
 // #include "types.h"
 #include <absl/container/flat_hash_set.h>
