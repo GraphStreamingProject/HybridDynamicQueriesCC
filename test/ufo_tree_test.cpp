@@ -105,6 +105,9 @@ TEST(UFOTreeSuite, stress_test_with_cuts) {
       if (ufo.is_connected(u, v)) {
           if (ufo.has_edge(u, v)) {
               ufo.cut(u, v);
+          } else {
+            ufo.update_sketch(u, v);
+            ufo.update_sketch(v, u);
           }
       } else {
           ufo.link(u, v);

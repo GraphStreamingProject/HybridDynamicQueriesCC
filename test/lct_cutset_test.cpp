@@ -81,15 +81,16 @@ TEST(LCTSuite, stress_test_with_cuts) {
   std::cout << "Running " << num_trials << " trials." << std::endl;
   std::cout << "n: " << nodecount << std::endl;
   std::cout << "n_ops: " << n_ops << std::endl;
-
   for (int trial = 0; trial < num_trials; ++trial) {
     int current_seed = command_line_seed == -1 ? rand() : command_line_seed;
     srand(current_seed);
     std::cout << "Trial " << trial + 1 << " seed: " << current_seed << std::endl;
-    // Initialize a fresh tree for this trial
     cutset_lct::CutsetLCT<DefaultSketchColumn> lct(nodecount, current_seed);
     std::unordered_set<uint64_t> edges;
-    
+    std::vector<DefaultSketchColumn> base_sketches;
+    for (int i = 0; i < nodecount; ++i) {
+      base_sketches.emplace_back(DefaultSketchColumn::suggest_capacity(nodecount), current_seed);
+    }
     for (int i = 0; i < n_ops; i++) {
       int u = rand() % nodecount;
       int v = rand() % nodecount;
@@ -99,13 +100,17 @@ TEST(LCTSuite, stress_test_with_cuts) {
           if (edges.count(edge)) {
               lct.cut(u, v);
               edges.erase(edge);
+          } else {
+            lct.update_sketch(u, v);
+            lct.update_sketch(v, u);
+            base_sketches[u].update(v);
+            base_sketches[v].update(u);
           }
       } else {
           lct.link(u, v);
           edges.insert(edge);
       }
-      ASSERT_TRUE(lct.verify_structure()) << "Trial " << trial + 1 << " structure invalid at step " << i;
+      ASSERT_TRUE(lct.verify_structure(base_sketches)) << "Trial " << trial + 1 << " structure invalid at step " << i;
     }
-    // lct.print_tree();
   }
 }

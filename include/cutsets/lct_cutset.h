@@ -21,7 +21,9 @@ public:
     void cut(vertex_t u, vertex_t v);
     bool is_connected(vertex_t u, vertex_t v);
 
-    bool verify_structure();
+    void update_sketch(vertex_t v, vec_t update_idx);
+
+    bool verify_structure(const std::vector<SketchClass>& base_sketches);
 private:
     uint64_t seed;
     std::vector<Node<SketchClass>> verts;
@@ -49,12 +51,21 @@ bool CutsetLCT<SketchClass>::is_connected(vertex_t u, vertex_t v) {
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetLCT<SketchClass>::verify_structure() {
+void CutsetLCT<SketchClass>::update_sketch(vertex_t v, vec_t update_idx) {
+    ColumnEntryDelta delta = verts[v].sketch_agg.generate_entry_delta(update_idx);
+    Node<SketchClass>* curr = &verts[v];
+    while (curr) {
+        curr->sketch_agg.apply_entry_delta(delta);
+        curr = curr->parent;
+    }
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass>::verify_structure(const std::vector<SketchClass>& base_sketches) {
     std::unordered_map<Node<SketchClass>*, std::vector<node_id_t>> components;
     for (node_id_t i = 0; i < verts.size(); ++i) {
         components[verts[i].get_representative()].push_back(i);
     }
-
     bool valid = true;
     for (const auto& [root, leaf_indices] : components) {
         if (root->weight != leaf_indices.size()) {
@@ -64,10 +75,9 @@ bool CutsetLCT<SketchClass>::verify_structure() {
             std::cout << "Root address: " << root << " Leaf count: " << leaf_indices.size() << "\n";
             valid = false;
         }
-
         SketchClass expected_sketch(SketchClass::suggest_capacity(verts.size()), seed);
         for (node_id_t idx : leaf_indices) {
-            expected_sketch.merge(verts[idx].sketch_agg);
+            expected_sketch.merge(base_sketches[idx]);
         }
         if (root->sketch_agg != expected_sketch) {
              std::cout << "Sketch mismatch for root " << root << std::endl;
@@ -141,9 +151,14 @@ void Node<SketchClass>::rotate_up() { // rotate v towards its parent; v must hav
     this->children[dir] = p;
     p->parent = this;
     // Update aggregates
-    if (p->children[!dir]) this->weight -= p->children[!dir]->weight;
+    if (p->children[!dir]) {
+        this->weight -= p->children[!dir]->weight;
+        this->sketch_agg.merge(p->children[!dir]->sketch_agg);
+    }
     p->weight -= this->weight;
+    p->sketch_agg.merge(this->sketch_agg);
     this->weight += p->weight;
+    this->sketch_agg.merge(p->sketch_agg);
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -210,6 +225,7 @@ void Node<SketchClass>::cut(Node* neighbor) {
         if (children[i] == neighbor)
             children[i] = nullptr;
     this->weight -= neighbor->weight;
+    this->sketch_agg.merge(neighbor->sketch_agg);
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -219,6 +235,7 @@ void Node<SketchClass>::link(Node* child) {
     child->parent = this;
     this->children[1] = child;
     this->weight += child->weight;
+    this->sketch_agg.merge(child->sketch_agg);
 }
 
 }
