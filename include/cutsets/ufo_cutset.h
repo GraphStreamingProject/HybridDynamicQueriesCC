@@ -11,7 +11,7 @@
 
 namespace ufo {
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+template<typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class CutsetUFOTree {
 using Cluster = UFOCluster<SketchClass>;
 public:

@@ -205,6 +205,8 @@ template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 size_t UFOCluster<SketchClass>::calculate_size() {
     size_t memory = sizeof(UFOCluster<SketchClass>);
     if (has_neighbor_set()) memory += get_neighbor_set()->bucket_count() * sizeof(Cluster*);
+    memory += sketch_agg.space_usage_bytes();
+    memory -= sizeof(SketchClass); // double counted in sizeof cluster and self-reported sketch size
     return memory;
 }
 

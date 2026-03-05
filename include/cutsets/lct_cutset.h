@@ -11,7 +11,7 @@ using namespace ufo;
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 class Node;
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+template<typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 class CutsetLCT {
 public:
     CutsetLCT(int n, uint64_t seed);
@@ -23,6 +23,7 @@ public:
 
     void update_sketch(vertex_t v, vec_t update_idx);
 
+    size_t space();
     bool verify_structure(const std::vector<SketchClass>& base_sketches);
 private:
     uint64_t seed;
@@ -58,6 +59,13 @@ void CutsetLCT<SketchClass>::update_sketch(vertex_t v, vec_t update_idx) {
         curr->sketch_agg.apply_entry_delta(delta);
         curr = curr->parent;
     }
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+size_t CutsetLCT<SketchClass>::space() {
+    size_t mem = sizeof(CutsetLCT<SketchClass>);
+    for (auto v : verts) mem += v.space();
+    return mem;
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -100,6 +108,12 @@ public:
     void cut(Node* neighbor);
     void evert(); // reroot
  
+    size_t space() {
+        size_t mem = sizeof(Node<SketchClass>);
+        mem += sketch_agg.space_usage_bytes();
+        mem -= sizeof(SketchClass);
+        return mem;
+    }
 private:
     Node* parent; // parent
     Node* children[2]; // children
