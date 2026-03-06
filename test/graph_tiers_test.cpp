@@ -14,9 +14,9 @@
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
-using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+// using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
-// using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
 auto start = std::chrono::high_resolution_clock::now();
 auto stop = std::chrono::high_resolution_clock::now();
@@ -128,7 +128,11 @@ TEST(GraphTiersSuite, mini_correctness_test) {
                 FAIL();
             }
         }
+        ASSERT_TRUE(gt.verify_all_structures()) << "verify_all_structures failed after linking nodes " << i << " and " << i + 1;
     }
+    // Verify all cutset tier structures after linking phase
+    ASSERT_TRUE(gt.verify_all_structures()) << "verify_all_structures failed after link phase";
+
     // One by one cut all of the nodes into singletons
     for (node_id_t i = 0; i < numnodes-1; i++) {
         gt.update({{i, i+1}, DELETE});
@@ -145,6 +149,8 @@ TEST(GraphTiersSuite, mini_correctness_test) {
             }
         }
     }
+    // Verify all cutset tier structures after cutting phase
+    ASSERT_TRUE(gt.verify_all_structures()) << "verify_all_structures failed after cut phase";
 }
 
 TEST(GraphTiersSuite, deletion_replace_correctness_test) {
@@ -239,6 +245,11 @@ TEST(GraphTiersSuite, omp_correctness_test) {
                     std::cout << "EXPECTED: " << gv.get_num_kruskal_ccs() << std::endl;
                     FAIL();
                 }
+            }
+            // Periodically verify the internal structure of all cutset tiers
+            unlikely_if(i%50000 == 0) {
+                ASSERT_TRUE(gt.verify_all_structures())
+                    << "verify_all_structures failed at update " << i;
             }
         }
         std::ofstream file;

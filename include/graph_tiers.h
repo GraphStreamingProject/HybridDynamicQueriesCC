@@ -80,4 +80,17 @@ public:
 
   // query for if a is connected to b
   bool is_connected(node_id_t a, node_id_t b);
+
+  // Verify the structural integrity of every cutset tier.
+  bool verify_all_structures() {
+      bool valid = true;
+      for (size_t i = 0; i < ett.size(); ++i) {
+          bool tier_ok = ett[i].verify_structure();
+          if (!tier_ok) {
+              std::cout << "verify_structure FAILED at tier " << i << std::endl;
+              valid = false;
+          }
+      }
+      return valid;
+  }
 };

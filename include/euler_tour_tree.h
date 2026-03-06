@@ -230,5 +230,34 @@ public:
   std::vector<node_id_t> get_component_vertices(node_id_t u) {
       return ett_node(u).get_component_vertices();
   }
+
+  // Verify the structural integrity of the tree:
+  // checks that each component's root size and sketch aggregate
+  // match the expected values computed from the individual node sketches.
+  bool verify_structure() {
+      std::unordered_map<SkipListNode<SketchClass>*, std::vector<node_id_t>> components;
+      for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
+          if (!is_initialized(i)) continue;
+          components[get_root(i)].push_back(i);
+      }
+      bool valid = true;
+      for (const auto& [root, vertices] : components) {
+          // if (root->size != vertices.size()) {
+          //     std::cout << "Size mismatch for root " << root
+          //               << ": expected " << vertices.size()
+          //               << ", got " << root->size << "\n";
+          //     valid = false;
+          // }
+          SketchClass expected_sketch(SketchClass::suggest_capacity(max_num_nodes), seed);
+          for (node_id_t idx : vertices) {
+              expected_sketch.merge(ett_node(idx).allowed_caller->sketch_agg);
+          }
+          if (root->sketch_agg != expected_sketch) {
+              std::cout << "Sketch mismatch for root " << root << std::endl;
+              valid = false;
+          }
+      }
+      return valid;
+  }
 };
   

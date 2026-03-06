@@ -189,6 +189,21 @@ class BatchTiers {
         size_t num_tiers() const {
             return ett.size();
         }
+
+        // Verify the structural integrity of every cutset tier.
+        // Returns true if all tiers pass verification.
+        bool verify_all_structures() {
+            bool valid = true;
+            for (size_t i = 0; i < ett.size(); ++i) {
+                bool tier_ok = ett[i].verify_structure();
+                if (!tier_ok) {
+                    std::cout << "verify_structure FAILED at tier " << i << std::endl;
+                    valid = false;
+                }
+            }
+            return valid;
+        }
+
         // find the index of the highest everywhere-maximal tier.
         
         
