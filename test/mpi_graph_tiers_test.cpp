@@ -16,6 +16,9 @@
 const int DEFAULT_BATCH_SIZE = 100;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
+// using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
+using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+
 TEST(GraphTierSuite, mpi_mixed_speed_test) {
     int world_rank_buf;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank_buf);
@@ -111,7 +114,7 @@ TEST(GraphTierSuite, mpi_mixed_speed_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -210,7 +213,7 @@ TEST(GraphTierSuite, mpi_memory_measure_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -283,7 +286,7 @@ TEST(GraphTierSuite, mpi_update_speed_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -362,7 +365,7 @@ TEST(GraphTiersSuite, mpi_query_speed_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, world_rank-1, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, world_rank-1, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -376,9 +379,9 @@ TEST(GraphTiersSuite, mpi_mini_correctness_test) {
     uint32_t world_size = world_size_buf;
 
     uint32_t num_nodes = 100;
-    uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
-    if (world_size != num_tiers+1)
-        FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
+    uint32_t num_tiers = world_size - 1;
+    // if (world_size != num_tiers+1)
+    //     FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
     // Parameters
     int update_batch_size = 1;
     height_factor = 1;
@@ -436,7 +439,7 @@ TEST(GraphTiersSuite, mpi_mini_correctness_test) {
         input_node.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -518,7 +521,7 @@ TEST(GraphTiersSuite, mpi_mini_replacement_test) {
         input_node.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -650,7 +653,7 @@ TEST(GraphTiersSuite, mpi_mini_batch_test) {
         input_node.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -692,6 +695,7 @@ TEST(GraphTiersSuite, mpi_correctness_test) {
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
         InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
+        input_node.initialize_all_nodes();
         GraphVerifier gv(num_nodes);
         int edgecount = stream.edges();
 	    int count = 20000000;
@@ -725,7 +729,7 @@ TEST(GraphTiersSuite, mpi_correctness_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }

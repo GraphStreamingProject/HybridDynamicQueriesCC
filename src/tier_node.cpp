@@ -9,7 +9,9 @@ long normal_refresh_time = 0;
 long greedy_batch_gather_time = 0;
 long size_message_passing_time = 0;
 
-TierNode::TierNode(node_id_t num_nodes, uint32_t tier_num, uint32_t num_tiers, int batch_size, int seed) :
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+TierNode<TreeStrategy>::TierNode(node_id_t num_nodes, uint32_t tier_num, uint32_t num_tiers, int batch_size, int seed) :
     tier_num(tier_num), num_tiers(num_tiers), batch_size(batch_size), ett(num_nodes, tier_num, seed) {
     update_buffer = (UpdateMessage*) malloc(sizeof(UpdateMessage)*(batch_size+1));
     this_sizes_buffer = (GreedyRefreshMessage*) malloc(sizeof(GreedyRefreshMessage)*batch_size);
@@ -18,7 +20,9 @@ TierNode::TierNode(node_id_t num_nodes, uint32_t tier_num, uint32_t num_tiers, i
     split_revert_buffer = (bool*) malloc(sizeof(bool)*batch_size);
 }
 
-TierNode::~TierNode() {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+TierNode<TreeStrategy>::~TierNode() {
     free(update_buffer);
     free(this_sizes_buffer);
     free(next_sizes_buffer);
@@ -26,7 +30,9 @@ TierNode::~TierNode() {
     free(split_revert_buffer);
 }
 
-void TierNode::main() {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void TierNode<TreeStrategy>::main() {
     while (true) {
         // Receive a batch of updates and check if it is the end of stream
         bcast(update_buffer, sizeof(UpdateMessage)*(batch_size+1), 0);
@@ -166,9 +172,9 @@ void TierNode::main() {
                         e2.v = refresh_message.endpoints.second.v;
                         for (RefreshEndpoint* e : {&e1, &e2}) {
                             e->prev_tier_size = ett.get_size(e->v);
-                            SkipListNode<DefaultSketchColumn>* root = ett.get_root(e->v);
+                            Handle root = ett.get_root(e->v);
                             root->process_updates();
-                            DefaultSketchColumn &ett_agg = root->sketch_agg;
+                            SketchClass &ett_agg = root->sketch_agg;
                             ett_agg.reset_sample_state();
                             e->sketch_query_result = ett_agg.sample();
                         }
@@ -203,7 +209,9 @@ void TierNode::main() {
     }
 }
 
-void TierNode::ett_update_tier(EttUpdateMessage message) {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void TierNode<TreeStrategy>::ett_update_tier(EttUpdateMessage message) {
     if (message.type == LINK && tier_num >= message.start_tier) {
         ett.link(message.endpoint1, message.endpoint2);
         ENDPOINT_CANARY("Linking ETT With", message.endpoint1, message.endpoint2);
@@ -213,7 +221,9 @@ void TierNode::ett_update_tier(EttUpdateMessage message) {
     }
 }
 
-void TierNode::refresh_tier(RefreshMessage message) {
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message) {
     for (RefreshEndpoint endpoint: {message.endpoints.first, message.endpoints.second}) {
         // Check if the tree containing this endpoint is isolated
         uint32_t prev_tier_size = endpoint.prev_tier_size;
@@ -265,3 +275,6 @@ void TierNode::refresh_tier(RefreshMessage message) {
         ENDPOINT_CANARY("Linking ETT With", a, b);
     }
 }
+
+template class TierNode<EulerTourTree<DefaultSketchColumn>>;
+template class TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;

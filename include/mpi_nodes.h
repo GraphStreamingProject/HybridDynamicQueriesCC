@@ -17,6 +17,8 @@
 #include "sketch/sketch_concept.h"
 #include "sketch/sketch_columns.h"
 #include "sketch_interfacing.h"
+#include "cutset_data_structure.h"
+#include "cutsets/ufo_cutset.h"
 
 
 enum TreeOperationType {
@@ -144,8 +146,12 @@ public:
   
 };
 
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class TierNode {
-  EulerTourTree<DefaultSketchColumn> ett;
+  using SketchClass = typename TreeStrategy::SketchType;
+  using Handle = typename TreeStrategy::Handle;
+  TreeStrategy ett;
   uint32_t tier_num;
   uint32_t num_tiers;
   int batch_size;

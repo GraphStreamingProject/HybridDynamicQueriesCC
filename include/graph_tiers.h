@@ -47,6 +47,31 @@ public:
   GraphTiers(node_id_t num_nodes, uint64_t seed);
   ~GraphTiers();
 
+  bool is_initialized(node_id_t u) {
+    return ett[0].is_initialized(u);
+  }
+
+  void initialize_node(node_id_t u) {
+    for (auto &tree : ett) {
+      tree.initialize_node(u);
+    }
+    link_cut_tree.initialize_node(u);
+  }
+
+  void uninitialize_node(node_id_t u) {
+    for (auto &tree : ett) {
+      tree.uninitialize_node(u);
+    }
+    link_cut_tree.uninitialize_node(u);
+  }
+
+  void initialize_all_nodes() {
+    for (auto &tree : ett) {
+      tree.initialize_all_nodes();
+    }
+    link_cut_tree.initialize_all_nodes();
+  }
+
   // apply an edge update
   void update(GraphUpdate update);
 

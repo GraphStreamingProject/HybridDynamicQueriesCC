@@ -26,6 +26,10 @@ InputNode::~InputNode() {
 
 void InputNode::update(GraphUpdate update) {
     num_updates++;
+    if (!query_ett.is_initialized(update.edge.src))
+        query_ett.initialize_node(update.edge.src);
+    if (!query_ett.is_initialized(update.edge.dst))
+        query_ett.initialize_node(update.edge.dst);
     UpdateMessage update_message;
     update_message.update = update;
     update_buffer[buffer_size++] = update_message;

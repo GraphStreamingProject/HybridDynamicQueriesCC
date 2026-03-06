@@ -18,6 +18,9 @@ const int DEFAULT_BATCH_SIZE = 100;
 const int DEFAULT_HYBRID_THRESHOLD = 1400;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
+using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
+// using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+
 // TEST(GraphTierSuite, hybrid_mixed_speed_test) {
 //     int world_rank_buf;
 //     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank_buf);
@@ -110,7 +113,7 @@ const vec_t DEFAULT_SKETCH_ERR = 1;
 
 //     } else if (world_rank < num_tiers+1) {
 //         int tier_num = world_rank-1;
-//         TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+//         TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
 //         tier_node.main();
 //     }
 // }
@@ -187,7 +190,7 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -270,7 +273,7 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, world_rank-1, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, world_rank-1, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -365,7 +368,7 @@ TEST(GraphTierSuite, hybrid_memory_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -443,7 +446,7 @@ TEST(GraphTiersSuite, hybrid_mini_correctness_test) {
         hybrid_driver.sketching_algo.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -559,7 +562,7 @@ TEST(GraphTiersSuite, hybrid_small_correctness_test) {
         hybrid_driver.sketching_algo.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
@@ -640,7 +643,7 @@ TEST(GraphTiersSuite, hybrid_small_correctness_test) {
 //         input_node.end();
 //     } else if (world_rank < num_tiers+1) {
 //         int tier_num = world_rank-1;
-//         TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+//         TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
 //         tier_node.main();
 //     }
 // }
@@ -771,7 +774,7 @@ TEST(GraphTiersSuite, hybrid_small_correctness_test) {
 //         input_node.end();
 //     } else if (world_rank < num_tiers+1) {
 //         int tier_num = world_rank-1;
-//         TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+//         TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
 //         tier_node.main();
 //     }
 // }
@@ -852,7 +855,7 @@ TEST(GraphTiersSuite, hybrid_correctness_test) {
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
-        TierNode tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
+        TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
         tier_node.main();
     }
 }
