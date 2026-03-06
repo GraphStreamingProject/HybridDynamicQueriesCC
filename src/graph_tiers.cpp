@@ -23,7 +23,7 @@ long normal_refreshes = 0;
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_cut_tree(num_nodes) {
+GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed) {
 	// Algorithm parameters
 	uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
 
@@ -54,8 +54,9 @@ requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 	edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
 	// Update the sketches of both endpoints of the edge in all tiers
-	if (update.type == DELETE && link_cut_tree.has_edge(update.edge.src, update.edge.dst)) {
+	if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
 		link_cut_tree.cut(update.edge.src, update.edge.dst);
+		query_ett.cut(update.edge.src, update.edge.dst);
 	}
 	START(su);
 	std::atomic<bool> did_cut(false);
@@ -160,15 +161,14 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 
 			// Check if a path exists between the edge's endpoints
 			START(lct1);
-			void* a_root = link_cut_tree.find_root(a);
-			void* b_root = link_cut_tree.find_root(b);
+			bool ab_connected = link_cut_tree.connected(a, b);
 			STOP(lct_time, lct1);
-			if (a_root == b_root) {
+			if (ab_connected) {
 				START(lct2);
 				// Find the maximum tier edge on the path and what tier it first appeared on
-				std::pair<edge_id_t, uint32_t> max = link_cut_tree.path_aggregate(a,b);
-				node_id_t c = (node_id_t)max.first;
-				node_id_t d = (node_id_t)(max.first>>32);
+				std::pair<Edge, int8_t> max = link_cut_tree.path_query(a,b);
+				node_id_t c = max.first.src;
+				node_id_t d = max.first.dst;
 				STOP(lct_time, lct2);
 
 				// Remove the maximum tier edge on all paths where it exists
@@ -181,6 +181,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 				STOP(ett_time, ett1);
 				START(lct3);
 				link_cut_tree.cut(c,d);
+				query_ett.cut(c,d);
 				STOP(lct_time, lct3);
 			}
 
@@ -194,6 +195,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			STOP(ett_time, ett2);
 			START(lct4);
 			link_cut_tree.link(a,b, tier+1);
+			query_ett.link(a,b);
 			STOP(lct_time, lct4);
 		}
 		// if (both_components_maximized) {
@@ -233,7 +235,7 @@ std::vector<std::set<node_id_t>> GraphTiers<TreeStrategy>::get_cc() {
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
-	return this->link_cut_tree.find_root(a) == this->link_cut_tree.find_root(b);
+	return this->query_ett.is_connected(a, b);
 }
 
 template class GraphTiers<EulerTourTree<DefaultSketchColumn>>;

@@ -56,8 +56,8 @@ public:
     std::pair<Handle, Handle> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
         // TODO - see if this should be done differently. dont need to update in some limited cases.
         auto delta = generate_entry_delta(u, update_idx);
-        auto handle_u = this->update_sketch(u, update_idx);
-        auto handle_v = this->update_sketch(v, update_idx);
+        auto handle_u = this->update_sketch(u, delta);
+        auto handle_v = this->update_sketch(v, delta);
         return {handle_u, handle_v};
     }
 
@@ -285,10 +285,11 @@ void CutsetUFOTree<SketchClass>::link(vertex_t u, vertex_t v) {
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void CutsetUFOTree<SketchClass>::cut(vertex_t u, vertex_t v) {
     assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
-    assert(leaves[u].contains_neighbor(&leaves[v]));
+    // assert(leaves[u].contains_neighbor(&leaves[v]));
     max_level = 0;
     auto curr_u = &leaves[u];
     auto curr_v = &leaves[v];
+    assert(curr_u->contains_neighbor(curr_v));
     while (curr_u != curr_v) {
         lower_deg[0].push_back({curr_u, curr_u->get_degree()-1});
         lower_deg[1].push_back({curr_v, curr_v->get_degree()-1});

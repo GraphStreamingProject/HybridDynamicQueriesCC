@@ -106,8 +106,9 @@ TEST(UFOTreeSuite, stress_test_with_cuts) {
           if (ufo.has_edge(u, v)) {
               ufo.cut(u, v);
           } else {
-            ufo.update_sketch(u, v);
-            ufo.update_sketch(v, u);
+            edge_id_t edge = VERTICES_TO_EDGE(u, v);
+            ufo.update_sketch(u, edge);
+            ufo.update_sketch(v, edge);
           }
       } else {
           ufo.link(u, v);
@@ -118,3 +119,79 @@ TEST(UFOTreeSuite, stress_test_with_cuts) {
     // ufo.print_tree();
   }
 }
+
+TEST(UFOTreeSuite, random_interspersed_sketch_updates) {
+  srand(time(NULL));
+  int num_trials = command_line_num_trials == 0 ? 1 : command_line_num_trials;
+  int nodecount = command_line_n == 0 ? 1000 : command_line_n;
+  int n_ops = command_line_k == 0 ? (1 << 20) : command_line_k;
+  sketch_len = nodecount;
+
+  std::cout << "Running " << num_trials << " trials." << std::endl;
+  std::cout << "n: " << nodecount << std::endl;
+  std::cout << "n_ops: " << n_ops << std::endl;
+
+  for (int trial = 0; trial < num_trials; ++trial) {
+    int current_seed = command_line_seed == -1 ? rand() : command_line_seed;
+    srand(current_seed);
+    std::cout << "Trial " << trial + 1 << " seed: " << current_seed << std::endl;
+
+    CutsetUFOTree ufo(nodecount, 1, current_seed);
+    std::unordered_set<edge_id_t> forest_edges;
+
+    for (int i = 0; i < n_ops; i++) {
+      int u = -1;
+      int v = -1;
+      edge_id_t edge = 0;
+
+      // 10% of the time, pick an edge that is already in the direct forest edge set.
+      bool choose_forest_edge = !forest_edges.empty() && ((rand() % 10) == 0);
+      if (choose_forest_edge) {
+        size_t pick = static_cast<size_t>(rand()) % forest_edges.size();
+        auto it = forest_edges.begin();
+        std::advance(it, static_cast<long>(pick));
+        edge = *it;
+        u = inv_concat_pairing_fn(edge).src;
+        v = inv_concat_pairing_fn(edge).dst;
+      } else {
+        u = rand() % nodecount;
+        v = rand() % nodecount;
+        if (u == v) continue;
+        edge = VERTICES_TO_EDGE(u, v);
+      }
+
+      bool edge_in_forest = forest_edges.find(edge) != forest_edges.end();
+
+      // 90%: if (u,v) is not a direct forest edge, add it to both endpoint sketches.
+      if ((rand() % 10) != 0) {
+        if (!edge_in_forest) {
+          ufo.update_sketch(u, edge);
+          ufo.update_sketch(v, edge);
+        }
+      } else {
+        // 10%: keep stress_test_with_cuts behavior.
+        // i.e., remove the edge if it exists,
+        // link the two via it if they're not connected,
+        // update the sketches if they're connected but not via that edge.
+        if (ufo.is_connected(u, v)) {
+          if (edge_in_forest) {
+            ufo.cut(u, v);
+            forest_edges.erase(edge);
+          } else {
+            ufo.update_sketch(u, edge);
+            ufo.update_sketch(v, edge);
+          }
+        } else {
+          ufo.link(u, v);
+          forest_edges.insert(edge);
+        }
+      }
+
+      ASSERT_TRUE(ufo.verify_structure())
+          << "Trial " << trial + 1
+          << " structure invalid at step " << i
+          << " (u=" << u << ", v=" << v << ")";
+    }
+  }
+}
+

@@ -14,8 +14,8 @@
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
-// using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
-using GraphTierSystem = GraphTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+// using GraphTierSystem = GraphTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
@@ -251,7 +251,7 @@ TEST(GraphTiersSuite, omp_correctness_test) {
                 }
             }
             // Periodically verify the internal structure of all cutset tiers
-            unlikely_if(i%50000 == 0) {
+            unlikely_if(i%1000 == 0) {
                 ASSERT_TRUE(gt.verify_all_structures())
                     << "verify_all_structures failed at update " << i;
             }

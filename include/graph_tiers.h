@@ -5,9 +5,10 @@
 #include <atomic>
 
 #include "euler_tour_tree.h"
-#include "link_cut_tree.h"
+// #include "link_cut_tree.h"
 #include "cutsets/ufo_cutset.h"
-// #include "lct_v2.h"
+#include "lct_v2.h"
+#include "sketchless_euler_tour_tree.h"
 
 
 // Global variables for performance testing
@@ -40,8 +41,8 @@ class GraphTiers {
 private:
   std::vector<TreeStrategy> ett;  // one ETT for each tier
   std::vector<Handle> root_nodes;
-  // LinkCutTreeMaxAgg<int8_t> link_cut_tree;
-  LinkCutTree<> link_cut_tree;
+  LinkCutTreeMaxAgg<int8_t> link_cut_tree;
+  SketchlessEulerTourTree<> query_ett;
   void refresh(GraphUpdate update, bool did_cut);
 
 public:
@@ -57,6 +58,7 @@ public:
       tree.initialize_node(u);
     }
     link_cut_tree.initialize_node(u);
+    query_ett.initialize_node(u);
   }
 
   void uninitialize_node(node_id_t u) {
@@ -64,6 +66,7 @@ public:
       tree.uninitialize_node(u);
     }
     link_cut_tree.uninitialize_node(u);
+    query_ett.uninitialize_node(u);
   }
 
   void initialize_all_nodes() {
@@ -71,6 +74,7 @@ public:
       tree.initialize_all_nodes();
     }
     link_cut_tree.initialize_all_nodes();
+    query_ett.initialize_all_nodes();
   }
 
   // apply an edge update
