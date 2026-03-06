@@ -237,4 +237,4 @@ bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
 }
 
 template class GraphTiers<EulerTourTree<DefaultSketchColumn>>;
-// template class GraphTiers<CutsetUFOTree>;
+template class GraphTiers<CutsetUFOTree>;

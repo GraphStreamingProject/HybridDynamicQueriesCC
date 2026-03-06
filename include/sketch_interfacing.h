@@ -7,5 +7,5 @@
 extern vec_t sketch_len;
 extern vec_t sketch_err;
 
-// using DefaultSketchColumn = FixedSizeSketchColumn;
-using DefaultSketchColumn = ResizeableSketchColumn;
+using DefaultSketchColumn = FixedSizeSketchColumn;
+// using DefaultSketchColumn = ResizeableSketchColumn;

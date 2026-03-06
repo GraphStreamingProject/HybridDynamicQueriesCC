@@ -149,10 +149,7 @@ template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>
 void SkipListNode<SketchClass>::update_agg(vec_t update_idx) {
 	if (!this->sketch_agg.is_initialized()) // Only do something if this node has a sketch
 		return;
-	this->update_buffer[this->buffer_size] = update_idx;
-	this->buffer_size++;
-	if (this->buffer_size == SKETCH_BUFFER_SIZE)
-		this->process_updates();
+	this->sketch_agg.update(update_idx);
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -165,11 +162,7 @@ void SkipListNode<SketchClass>::update_agg_atomic(vec_t update_idx) {
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void SkipListNode<SketchClass>::process_updates() {
-	if (!this->sketch_agg.is_initialized()) // Only do something if this node has a sketch
-		return;
-	for (int i = 0; i < buffer_size; ++i)
-		this->sketch_agg.update(update_buffer[i]);
-	this->buffer_size = 0;
+	// No-op: buffering removed, updates applied directly in update_agg
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)

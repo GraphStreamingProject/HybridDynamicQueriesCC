@@ -13,8 +13,6 @@ using ColumnEntryDeltas = parlay::sequence<ColumnEntryDelta>::view_type;
 
 
 
-#define SKETCH_BUFFER_SIZE 25
-
 enum AggUpdateState {
     NORMAL = 0,
     // needs to be updated (normal cas logic)
@@ -44,9 +42,6 @@ class SkipListNode {
   // Store the first node to the left on the next level up
   SkipListNode<SketchClass>* parent = nullptr;
 
-  int buffer_size = 0;
-  int buffer_capacity;
-  vec_t update_buffer[SKETCH_BUFFER_SIZE];
   int8_t needs_update = AggUpdateState::NORMAL;
 
 public:

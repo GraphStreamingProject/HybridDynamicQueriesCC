@@ -252,7 +252,8 @@ public:
           for (node_id_t idx : vertices) {
               expected_sketch.merge(ett_node(idx).allowed_caller->sketch_agg);
           }
-          if (root->sketch_agg != expected_sketch) {
+          expected_sketch.merge(root->sketch_agg);
+          if (expected_sketch.sample().result != ZERO) {
               std::cout << "Sketch mismatch for root " << root << std::endl;
               valid = false;
           }

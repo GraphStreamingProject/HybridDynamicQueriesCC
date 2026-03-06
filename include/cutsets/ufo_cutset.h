@@ -1021,13 +1021,6 @@ bool CutsetUFOTree<SketchClass>::verify_structure() {
             expected_sketch.merge(leaves[idx].sketch_agg);
         }
 
-        // Assuming SketchClass supports != or similar comparison
-        // If not, we might need a workaround, but sketches usually do.
-        // For now, let's assume DefaultSketchColumn (FixedSizeSketchColumn) supports equality check
-        // If compilation fails, I will inspect sketch interface.
-        // Wait, sketch_interfacing.h defines DefaultSketchColumn. 
-        // Let's rely on standard operators or add a check if needed.
-        // Actually, FixedSizeSketchColumn usually has operator==.
         if (root->sketch_agg != expected_sketch) {
              std::cout << "Sketch mismatch for root " << root << std::endl;
              valid = false;
