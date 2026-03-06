@@ -1021,7 +1021,8 @@ bool CutsetUFOTree<SketchClass>::verify_structure() {
             expected_sketch.merge(leaves[idx].sketch_agg);
         }
 
-        if (root->sketch_agg != expected_sketch) {
+        expected_sketch.merge(root->sketch_agg);
+        if (expected_sketch.sample().result != ZERO) {
              std::cout << "Sketch mismatch for root " << root << std::endl;
              valid = false;
         }
