@@ -52,17 +52,29 @@ void InputNode::process_updates() {
     using_sliding_window = true;
     if (using_sliding_window != prev_strat)
         std::cout << "SWITCHED TO " << (using_sliding_window ? "SLIDING WINDOW" : "NORMAL STRAT") << std::endl;
+    // Pre-compute which tiers should be cut for each delete.
+    for (uint32_t i = 0; i < num_updates; i++) {
+        GraphUpdate update = update_buffer[i+1].update;
+        update_buffer[i+1].cut_start_tier = UINT32_MAX;
+        split_revert_buffer[i] = MAX_INT;
+        unlikely_if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
+            // NOTE - since query ett and lct are sync'd, we know that the path_query will return 
+            // exactly the weight of the edge, which is the tier it belongs to.
+            std::pair<Edge, int8_t> max_edge = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+            // note that max_edge.second HAS to be between 0 and num_tiers-1, 
+            // since we assign edge weights based on tier in the LCT, so no need for extra checks here
+            split_revert_buffer[i] = max_edge.second;
+            update_buffer[i+1].cut_start_tier = static_cast<uint32_t>(max_edge.second);
+        }
+    }
     // Broadcast the batch of updates to all nodes
     update_buffer[0].update.edge.src = num_updates;
     update_buffer[0].update.edge.dst = (int)using_sliding_window;
     bcast(&update_buffer[0], sizeof(UpdateMessage)*buffer_capacity, 0);
-    // Do all the link cut tree cutting for things in the batch
+    // Do all the link cut tree cuts for tree-edge deletes in the batch.
     for (uint32_t i = 0; i < num_updates; i++) {
         GraphUpdate update = update_buffer[i+1].update;
-        split_revert_buffer[i] = MAX_INT;
-        unlikely_if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
-            std::pair<Edge, int8_t> max_edge = link_cut_tree.path_query(update.edge.src, update.edge.dst);
-            split_revert_buffer[i] = max_edge.second;
+        unlikely_if (update_buffer[i+1].cut_start_tier != UINT32_MAX) {
             // probably where most structural (spanning forest) deletes happen?
             // potentially - revisit
             link_cut_tree.cut(update.edge.src, update.edge.dst);
@@ -105,7 +117,7 @@ void InputNode::process_updates() {
     for (int update_idx = minimum_isolated_update; update_idx < end_update_idx; update_idx++) {
         GraphUpdate update = update_buffer[update_idx].update;
         START(dt_operation_timer1);
-        unlikely_if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
+        unlikely_if (update_buffer[update_idx].cut_start_tier != UINT32_MAX) {
             link_cut_tree.cut(update.edge.src, update.edge.dst);
             query_ett.cut(update.edge.src, update.edge.dst);
             // transaction_log.add(update.edge, DELETE);

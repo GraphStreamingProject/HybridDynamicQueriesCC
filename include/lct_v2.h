@@ -373,10 +373,10 @@ std::pair<Edge, WeightT> LinkCutTreeMaxAgg<WeightT, Container>::path_query(node_
 }
 
 template <typename WeightT, typename Container>
-size_t LinkCutTreeMaxAgg<WeightT, Container>::space_usage_bytes() const{
-   size_t max_space = sizeof(LinkCutTreeMaxAgg<WeightT, Container>) + (num_verts * (sizeof(NodeMaxLCT<WeightT>*) + sizeof(NodeMaxLCT<WeightT>)));
-   return max_space;
+size_t LinkCutTreeMaxAgg<WeightT, Container>::space_usage_bytes() const {
+    size_t max_space = sizeof(LinkCutTreeMaxAgg<WeightT, Container>) +
+                       (num_verts * (sizeof(NodeMaxLCT<WeightT>*) + sizeof(NodeMaxLCT<WeightT>)));
+    return max_space;
 }
-
 
 template class LinkCutTreeMaxAgg<int8_t>;

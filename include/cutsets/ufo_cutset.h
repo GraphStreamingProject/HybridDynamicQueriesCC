@@ -17,7 +17,27 @@ using Cluster = UFOCluster<SketchClass>;
 public:
     // --- CutsetDataStructure type aliases ---
     using SketchType = SketchClass;
-    using Handle = Cluster*;
+    using ComponentID = size_t;
+
+    struct ComponentView {
+        Cluster* root = nullptr;
+
+        ComponentView() = default;
+        ComponentView(Cluster* root) : root(root) {}
+
+        ComponentID key() const {
+            return reinterpret_cast<ComponentID>(root);
+        }
+
+        uint32_t size() const {
+            return root->size;
+        }
+
+        SketchClass& sketch() const {
+            return root->sketch_agg;
+        }
+
+    };
 
     // Cutset-mode constructor
     CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, size_t seed);
@@ -49,23 +69,24 @@ public:
     bool is_connected(node_id_t u, node_id_t v) {
         return connected(static_cast<vertex_t>(u), static_cast<vertex_t>(v));
     }
-    bool has_edge(node_id_t u, node_id_t v) {
+    // Debug-only helper:
+    bool _has_edge(node_id_t u, node_id_t v) {
         return leaves[u].contains_neighbor(&leaves[v]);
     }
     
-    std::pair<Handle, Handle> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
+    std::pair<Cluster*, Cluster*> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
         // TODO - see if this should be done differently. dont need to update in some limited cases.
         auto delta = generate_entry_delta(u, update_idx);
-        auto handle_u = this->update_sketch(u, delta);
-        auto handle_v = this->update_sketch(v, delta);
-        return {handle_u, handle_v};
+        auto view_u = this->update_sketch(u, delta);
+        auto view_v = this->update_sketch(v, delta);
+        return {view_u.root, view_v.root};
     }
 
     // Sketch updates
-    Handle update_sketch(node_id_t u, vec_t update_idx);
-    Handle update_sketch(node_id_t u, const ColumnEntryDelta &delta);
-    Handle update_sketch_atomic(node_id_t u, vec_t update_idx);
-    Handle update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
+    ComponentView update_sketch(node_id_t u, vec_t update_idx);
+    ComponentView update_sketch(node_id_t u, const ColumnEntryDelta &delta);
+    ComponentView update_sketch_atomic(node_id_t u, vec_t update_idx);
+    ComponentView update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
     ColumnEntryDelta generate_entry_delta(node_id_t u, vec_t update) {
         return leaves[u].sketch_agg.generate_entry_delta(update);
     }
@@ -77,7 +98,13 @@ public:
     node_id_t get_max_nodes() {
         return static_cast<node_id_t>(leaves.size());
     }
-    Handle get_root(node_id_t u) {
+    ComponentID component_id(node_id_t u) {
+        return reinterpret_cast<ComponentID>(get_root(u));
+    }
+    ComponentView component_view(node_id_t u) {
+        return ComponentView{get_root(u)};
+    }
+    Cluster* get_root(node_id_t u) {
         return leaves[u].get_root();
     }
     std::vector<node_id_t> get_component_vertices(node_id_t u);
@@ -872,14 +899,14 @@ void CutsetUFOTree<SketchClass>::remove_adjacency(Cluster* u, Cluster* v) {
 // --- Sketch update methods ---
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::Handle
+typename CutsetUFOTree<SketchClass>::ComponentView
 CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch(u, delta);
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::Handle
+typename CutsetUFOTree<SketchClass>::ComponentView
 CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta to leaf, then walk up parent chain merging into each ancestor
     Cluster* current = &leaves[u];
@@ -888,18 +915,18 @@ CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, const ColumnEntryDelta &d
         current = current->parent;
         current->sketch_agg.apply_entry_delta(delta);
     }
-    return current; // return root
+    return ComponentView{current}; // return root view
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::Handle
+typename CutsetUFOTree<SketchClass>::ComponentView
 CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch_atomic(u, delta);
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::Handle
+typename CutsetUFOTree<SketchClass>::ComponentView
 CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta atomically to leaf, then walk up parent chain
     Cluster* current = &leaves[u];
@@ -908,7 +935,7 @@ CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, const ColumnEntryD
         current = current->parent;
         current->sketch_agg.atomic_apply_entry_delta(delta);
     }
-    return current; // return root
+    return ComponentView{current}; // return root view
 }
 
 // --- Component vertex enumeration ---

@@ -103,7 +103,7 @@ TEST(UFOTreeSuite, stress_test_with_cuts) {
       if (u == v) continue;
 
       if (ufo.is_connected(u, v)) {
-          if (ufo.has_edge(u, v)) {
+          if (ufo._has_edge(u, v)) {
               ufo.cut(u, v);
           } else {
             edge_id_t edge = VERTICES_TO_EDGE(u, v);

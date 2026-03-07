@@ -326,7 +326,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 		// Fix right pointer and add agg
 		l_curr->right = r_curr->right; // skip over boundary node
 		if (r_curr->right) r_curr->right->left = l_curr; // skip over boundary node, but to the left
-		r_curr->process_updates();
+		// r_curr->process_updates();
 		if (l_curr->sketch_agg.is_initialized() && r_curr->sketch_agg.is_initialized()) // Only if that skiplist node has a sketch
 			l_curr->sketch_agg.merge(r_curr->sketch_agg);
 		l_curr->size += r_curr->size-1;
@@ -352,7 +352,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 		// Sketch* l_root_agg = new Sketch(sketch_len, seed, 1, sketch_err);
 		SketchClass l_root_agg = SketchClass(
 			SketchClass::suggest_capacity(sketch_len), seed);
-		l_prev->process_updates();
+		// l_prev->process_updates();
 		l_root_agg.merge(l_prev->sketch_agg);
 		l_root_agg.merge(r_prev->sketch_agg);
 		uint32_t l_root_size = l_prev->size - (r_prev->size-1);
@@ -366,7 +366,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 
 			l_curr->sketch_agg.merge(l_root_agg);
 			l_curr->size = l_root_size;
-			r_curr->process_updates();
+			// r_curr->process_updates();
 			l_curr->sketch_agg.merge(r_curr->sketch_agg);
 			l_curr->size += r_curr->size-1;
 
@@ -421,7 +421,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::split_left(SkipListNode<Sk
 			new_bdry->sketch_agg.merge(bdry->sketch_agg);
 		new_bdry->size = bdry->size;
 		while (r_curr && !r_curr->up) {
-			r_curr->process_updates();
+			// r_curr->process_updates();
 			if (r_curr->sketch_agg.is_initialized()) // Only if that skiplist node has a sketch
 				new_bdry->sketch_agg.merge(r_curr->sketch_agg);
 			new_bdry->size += r_curr->size;

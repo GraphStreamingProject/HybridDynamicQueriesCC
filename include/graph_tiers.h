@@ -37,10 +37,10 @@ requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class GraphTiers {
   // FRIEND_TEST(GraphTiersSuite, mini_correctness_test);
   using SketchClass = typename TreeStrategy::SketchType;
-  using Handle = typename TreeStrategy::Handle;
+  using ComponentView = typename TreeStrategy::ComponentView;
 private:
   std::vector<TreeStrategy> ett;  // one ETT for each tier
-  std::vector<Handle> root_nodes;
+  std::vector<ComponentView> root_nodes;
   LinkCutTreeMaxAgg<int8_t> link_cut_tree;
   SketchlessEulerTourTree<> query_ett;
   void refresh(GraphUpdate update, bool did_cut);

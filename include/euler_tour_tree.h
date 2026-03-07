@@ -106,8 +106,28 @@ public:
   // Container ett_nodes;
   Container ett_nodes;
   
-  using Handle = SkipListNode<SketchClass>*;
   using SketchType = SketchClass;
+  using ComponentID = size_t;
+
+  struct ComponentView {
+    SkipListNode<SketchClass>* root = nullptr;
+
+    ComponentView() = default;
+    ComponentView(SkipListNode<SketchClass>* root) : root(root) {}
+
+    ComponentID key() const {
+      return reinterpret_cast<ComponentID>(root);
+    }
+
+    uint32_t size() const {
+      return root->size;
+    }
+
+    SketchClass& sketch() const {
+      return root->sketch_agg;
+    }
+
+  };
   
   EulerTourTree(node_id_t max_num_nodes, uint32_t tier_num, int seed);
 
@@ -161,17 +181,20 @@ public:
 
   void link(node_id_t u, node_id_t v);
   void cut(node_id_t u, node_id_t v);
-  bool has_edge(node_id_t u, node_id_t v);
+    // Debug-only helper: intentionally not part of the cutset strategy API.
+    bool _has_edge(node_id_t u, node_id_t v) {
+      return ett_node(u).has_edge_to(&ett_node(v));
+    }
   bool is_connected(node_id_t u, node_id_t v) {
       return get_root(u) == get_root(v);
   }
-  SkipListNode<SketchClass>* update_sketch(node_id_t u, vec_t update_idx);
-  SkipListNode<SketchClass>* update_sketch(node_id_t u, const ColumnEntryDelta &delta);
-  SkipListNode<SketchClass>* update_sketch(node_id_t u, const ColumnEntryDeltas &deltas);
-  SkipListNode<SketchClass>* update_sketch(node_id_t u, const SketchClass &sketch);
-  SkipListNode<SketchClass>* update_sketch_atomic(node_id_t u, vec_t update_idx);
-  SkipListNode<SketchClass>* update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
-  SkipListNode<SketchClass>* update_sketch_atomic(node_id_t u, const ColumnEntryDeltas &deltas);
+  ComponentView update_sketch(node_id_t u, vec_t update_idx);
+  ComponentView update_sketch(node_id_t u, const ColumnEntryDelta &delta);
+  ComponentView update_sketch(node_id_t u, const ColumnEntryDeltas &deltas);
+  ComponentView update_sketch(node_id_t u, const SketchClass &sketch);
+  ComponentView update_sketch_atomic(node_id_t u, vec_t update_idx);
+  ComponentView update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
+  ComponentView update_sketch_atomic(node_id_t u, const ColumnEntryDeltas &deltas);
   
   // returns the allowed caller
   // SkipListNode<SketchClass>* update_sketch_noagg_atomic(const ColumnEntryDelta &delta);
@@ -203,6 +226,12 @@ public:
   node_id_t get_max_nodes() {
       return max_num_nodes;
   }
+    ComponentID component_id(node_id_t u) {
+      return reinterpret_cast<ComponentID>(get_root(u));
+    }
+    ComponentView component_view(node_id_t u) {
+      return ComponentView{get_root(u)};
+    }
   size_t space_usage_bytes() {
     size_t total = 0;
     if constexpr (std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {

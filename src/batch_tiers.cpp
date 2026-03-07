@@ -119,14 +119,24 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     // treat all update endpoints as coming from independent components
     _component_reps_dsu.reset();
 
+    std::vector<int32_t> cut_start_tier(num_updates, -1);
+    for (size_t update_idx = 0; update_idx < num_updates; ++update_idx) {
+        const auto& update = updates[update_idx];
+        if (update.type == DELETE && is_tree_edge(update.edge.src, update.edge.dst)) {
+            std::pair<Edge, int8_t> cut_edge_info = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+            cut_start_tier[update_idx] = static_cast<int32_t>(cut_edge_info.second);
+        }
+    }
+
     // 0) Step 0: Process any necessary tree cut operations on every tier. 
     // we WONT immediately do the sketch updates in this case, and will rely on the next parallel branch for that
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, ett.size()),
         [&](const tbb::blocked_range<size_t>& r) {
             for (size_t i = r.begin(); i != r.end(); ++i) {
-                for (const auto& update : updates) {
-                    if (update.type == DELETE && ett[i].has_edge(update.edge.src, update.edge.dst)) {
+                for (size_t update_idx = 0; update_idx < updates.size(); ++update_idx) {
+                    const auto& update = updates[update_idx];
+                    if (cut_start_tier[update_idx] >= 0 && i >= static_cast<size_t>(cut_start_tier[update_idx])) {
                         ett[i].cut(update.edge.src, update.edge.dst);
                     }
                 }
@@ -136,8 +146,9 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     );
     // note: can just put this in the above region or use pardo
     // and process on the LCT:
-    for (const auto& update : updates) {
-        if (update.type == DELETE && is_tree_edge(update.edge.src, update.edge.dst)) {
+    for (size_t update_idx = 0; update_idx < updates.size(); ++update_idx) {
+        const auto& update = updates[update_idx];
+        if (cut_start_tier[update_idx] >= 0) {
             link_cut_tree.cut(update.edge.src, update.edge.dst);
             query_ett.cut(update.edge.src, update.edge.dst);
             transaction_log.push_back(update);
@@ -163,17 +174,17 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     std::atomic<size_t> num_unique_components = 0;
     // construct _unique_update_ids such that it contains just ONE idx for every unique
     // component at the first isolated tier
-    parlay::parlay_unordered_map_direct<typename BatchTiers<TreeStrategy>::Handle, int32_t> component_to_unique_id(2048, true);
+    parlay::parlay_unordered_map_direct<typename BatchTiers<TreeStrategy>::ComponentID, int32_t> component_to_unique_id(2048, true);
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, num_updates),
         [&](const tbb::blocked_range<size_t>& r) {
             for (size_t update_idx = r.begin(); update_idx != r.end(); ++update_idx) {
                 for (bool src_or_dst : {true, false}) {
                     node_id_t vertex = src_or_dst ? updates[update_idx].edge.src : updates[update_idx].edge.dst;
-                    typename BatchTiers<TreeStrategy>::Handle root = root_node(first_isolated_tier, update_idx, src_or_dst);
+                    auto root = root_node(first_isolated_tier, update_idx, src_or_dst);
                     // assign a unique id to this component if it doesnt have one already
                     //
-                    std::optional<int32_t> existing_id = component_to_unique_id.Insert(root, vertex);
+                    std::optional<int32_t> existing_id = component_to_unique_id.Insert(root.key(), vertex);
                     if (!existing_id.has_value()) {
                         size_t idx = num_unique_components.fetch_add(1);
                         _unique_update_ids[idx] = vertex;
@@ -226,21 +237,7 @@ template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 std::vector<std::set<node_id_t>> BatchTiers<TreeStrategy>::get_cc() {
     this->flush_buffer();
-	std::vector<std::set<node_id_t>> cc;
-	std::set<node_id_t> all_visited;
-	int top = ett.size()-1;
-	for (uint32_t i = 0; i < ett[top].ett_nodes.size(); i++) {
-		if (all_visited.find(i) == all_visited.end()) {
-			std::vector<node_id_t> component_vec = ett[top].get_component_vertices(i);
-			std::set<node_id_t> component;
-			for (auto v : component_vec) {
-				component.insert(v);
-				all_visited.insert(v);
-			}
-			cc.push_back(component);
-		}
-	}
-	return cc;
+    return query_ett.cc_query();
 }
 
 template <typename TreeStrategy>
@@ -306,8 +303,7 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_only(const parlay::sequence<
             GraphUpdate update = updates[update_idx];
             vec_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
             ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.src, edge_id);
-            typename BatchTiers<TreeStrategy>::Handle src_parent = ett[tier].update_sketch_atomic(update.edge.src, delta);
-            root_node(tier, update_idx, true) = src_parent;
+            root_node(tier, update_idx, true) = ett[tier].update_sketch_atomic(update.edge.src, delta);
         }
     });
     // }, tbb::static_partitioner{});
@@ -324,8 +320,7 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_only(const parlay::sequence<
                 GraphUpdate update = updates[update_idx];
                 vec_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                 ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.dst, edge_id);
-                typename BatchTiers<TreeStrategy>::Handle dst_parent = ett[tier].update_sketch_atomic(update.edge.dst, delta);
-                root_node(tier, update_idx, false) = dst_parent;
+                root_node(tier, update_idx, false) = ett[tier].update_sketch_atomic(update.edge.dst, delta);
                 // }, conservative);}
             }
         });
@@ -334,94 +329,91 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_only(const parlay::sequence<
 }
 
 template <typename TreeStrategy>
-requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-void BatchTiers<TreeStrategy>::_process_sketch_aggs_with_cas(const parlay::sequence<GraphUpdate> &updates) {
-    size_t num_updates = updates.size();
-    size_t num_tiers = ett.size();
-    assert(num_updates <= maximum_batch_size);
-    auto src_sorted_update_idxs = parlay::tabulate(num_updates, [&](size_t i) {
-        return i;
-    });
-    parlay::sort_inplace(src_sorted_update_idxs, [&](size_t i, size_t j) {
-        return updates[i].edge.src < updates[j].edge.src;
-    });
-    auto dst_sorted_update_idxs = parlay::tabulate(num_updates, [&](size_t i) {
-        return i;
-    });
-    parlay::sort_inplace(dst_sorted_update_idxs, [&](size_t i, size_t j) {
-        return updates[i].edge.dst < updates[j].edge.dst;
-    });
-    parlay::sequence<typename BatchTiers<TreeStrategy>::Handle> temp_roots;
-    // in src order:
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
-        [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                size_t tier = i / num_updates;
-                size_t update_idx = src_sorted_update_idxs[i % num_updates];
-                GraphUpdate update = updates[update_idx];
-                const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.src, concat_pairing_fn(update.edge.src, update.edge.dst));
-                Handle src_parent = ett[tier].ett_node(
-                                                                     update.edge.src)
-                                                            .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
-                typename BatchTiers<TreeStrategy>::Handle root = src_parent->find_root_with_cas();
-                root_node(tier, update_idx, true) = root;
-            }
-        });
-    // in dst order:
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
-        [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                size_t tier = i / num_updates;
-                size_t update_idx = dst_sorted_update_idxs[i % num_updates];
-                GraphUpdate update = updates[update_idx];
+    requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+void BatchTiers<TreeStrategy>::_process_sketch_aggs_with_cas(const parlay::sequence<GraphUpdate>& updates) {
+    if constexpr (!SupportsCasSketchAggFastPath<TreeStrategy>) {
+        // This path is intentionally strategy-specific (ETT/UFO-like trees).
+        // For other trees (e.g. LCT variants), use the generic tier-sequential
+        // updater to avoid requiring CAS/root-capture internals.
+        _process_sketch_aggs_tier_sequential(updates);
+        return;
+    } else {
+        size_t num_updates = updates.size();
+        size_t num_tiers = ett.size();
+        assert(num_updates <= maximum_batch_size);
+        auto src_sorted_update_idxs = parlay::tabulate(num_updates, [&](size_t i) { return i; });
+        parlay::sort_inplace(src_sorted_update_idxs,
+                             [&](size_t i, size_t j) { return updates[i].edge.src < updates[j].edge.src; });
+        auto dst_sorted_update_idxs = parlay::tabulate(num_updates, [&](size_t i) { return i; });
+        parlay::sort_inplace(dst_sorted_update_idxs,
+                             [&](size_t i, size_t j) { return updates[i].edge.dst < updates[j].edge.dst; });
+        // in src order:
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
+            [&](const tbb::blocked_range<size_t>& r) {
+                for (size_t i = r.begin(); i != r.end(); ++i) {
+                    size_t tier = i / num_updates;
+                    size_t update_idx = src_sorted_update_idxs[i % num_updates];
+                    GraphUpdate update = updates[update_idx];
+                    const ColumnEntryDelta delta = ett[tier].generate_entry_delta(
+                        update.edge.src, concat_pairing_fn(update.edge.src, update.edge.dst));
+                    auto src_parent = ett[tier]
+                                            .ett_node(update.edge.src)
+                                            .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
+                    auto root = src_parent->find_root_with_cas();
+                    root_node(tier, update_idx, true) = typename BatchTiers<TreeStrategy>::ComponentView{root};
+                }
+            });
+        // in dst order:
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
+            [&](const tbb::blocked_range<size_t>& r) {
+                for (size_t i = r.begin(); i != r.end(); ++i) {
+                    size_t tier = i / num_updates;
+                    size_t update_idx = dst_sorted_update_idxs[i % num_updates];
+                    GraphUpdate update = updates[update_idx];
 
-                const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.dst, concat_pairing_fn(update.edge.src, update.edge.dst));
-                Handle dst_parent = ett[tier].ett_node(
-                                                                     update.edge.dst)
-                                                            .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
-                typename BatchTiers<TreeStrategy>::Handle root = dst_parent->find_root_with_cas();
-                root_node(tier, update_idx, false) = root;
-            }
-        });
-    // TODO - this is gonna be unperformant, but I'd say worth it for simplicity in testing
-    // update root_node matrix
-    // in src order:
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
-        [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                size_t tier = i / num_updates;
-                size_t update_idx = src_sorted_update_idxs[i % num_updates];
-                GraphUpdate update = updates[update_idx];
-                if (root_node(tier, update_idx, true) != nullptr) {
-                    root_node(tier, update_idx, true)->recompute_aggs_topdown(2);
+                    const ColumnEntryDelta delta = ett[tier].generate_entry_delta(
+                        update.edge.dst, concat_pairing_fn(update.edge.src, update.edge.dst));
+                    auto dst_parent = ett[tier]
+                                            .ett_node(update.edge.dst)
+                                            .update_sketch_atomic_to_level(delta, 1);  // 3 levels up
+                    auto root = dst_parent->find_root_with_cas();
+                    root_node(tier, update_idx, false) = typename BatchTiers<TreeStrategy>::ComponentView{root};
                 }
-                else {
-                    typename BatchTiers<TreeStrategy>::Handle root = ett[tier].get_root(update.edge.src);
-                    root_node(tier, update_idx, true) = root;
+            });
+        // TODO - this is gonna be unperformant, but I'd say worth it for simplicity in testing
+        // update root_node matrix
+        // in src order:
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
+                          [&](const tbb::blocked_range<size_t>& r) {
+                              for (size_t i = r.begin(); i != r.end(); ++i) {
+                                  size_t tier = i / num_updates;
+                                  size_t update_idx = src_sorted_update_idxs[i % num_updates];
+                                  GraphUpdate update = updates[update_idx];
+                                  if (root_node(tier, update_idx, true).root != nullptr) {
+                                      root_node(tier, update_idx, true).root->recompute_aggs_topdown(2);
+                                  } else {
+                                      root_node(tier, update_idx, true) = ett[tier].component_view(update.edge.src);
+                                  }
+                              }
+                          });
+        // in dst order:
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
+            [&](const tbb::blocked_range<size_t>& r) {
+                for (size_t i = r.begin(); i != r.end(); ++i) {
+                    size_t tier = i / num_updates;
+                    size_t update_idx = dst_sorted_update_idxs[i % num_updates];
+                    GraphUpdate update = updates[update_idx];
+                    if (root_node(tier, update_idx, false).root != nullptr) {
+                        root_node(tier, update_idx, false).root->recompute_aggs_topdown(2);
+                    } else {
+                        root_node(tier, update_idx, false) = ett[tier].component_view(update.edge.dst);
+                    }
                 }
-            }
-        });
-    // in dst order:
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_updates * num_tiers, granularity),
-        [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                size_t tier = i / num_updates;
-                size_t update_idx = dst_sorted_update_idxs[i % num_updates];
-                GraphUpdate update = updates[update_idx];
-                typename BatchTiers<TreeStrategy>::Handle root = ett[tier].get_root(update.edge.dst);
-                if (root_node(tier, update_idx, false) != nullptr) {
-                    root_node(tier, update_idx, false)->recompute_aggs_topdown(2);
-                }
-                else {
-                    typename BatchTiers<TreeStrategy>::Handle root = ett[tier].get_root(update.edge.dst);
-                    root_node(tier, update_idx, false) = root;
-                }
-            }
-        });
+            });
+    }
 }
 
 template <typename TreeStrategy>
@@ -456,13 +448,11 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_tier_sequential(const parlay
                     vec_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                     // SkipListNode<SketchClass> *src_parent = ett[tier].update_sketch(update.edge.src, edge_id);
                     const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.src, edge_id);
-                    typename BatchTiers<TreeStrategy>::Handle src_parent = ett[tier].update_sketch(update.edge.src, delta);
                     // SkipListNode<SketchClass> *src_parent = ett[tier].update_sketch_atomic(update.edge.src, delta);
-                    
-                    root_node(tier, update_idx, true) = src_parent;
+                    root_node(tier, update_idx, true) = ett[tier].update_sketch(update.edge.src, delta);
                 }
                 for (size_t i = 0; i < num_updates; i++) {
-                    root_node(tier, i, true)->process_updates();
+                    // root_node(tier, i, true).process_updates();
                 }
                 for (size_t i = 0; i < num_updates; i++) {
                     size_t update_idx = dst_sorted_update_idxs[i];
@@ -471,11 +461,10 @@ void BatchTiers<TreeStrategy>::_process_sketch_aggs_tier_sequential(const parlay
                     vec_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                     // SkipListNode<SketchClass> *dst_parent = ett[tier].update_sketch(update.edge.dst, edge_id);
                     const ColumnEntryDelta delta = ett[tier].generate_entry_delta(update.edge.dst, edge_id);
-                    typename BatchTiers<TreeStrategy>::Handle dst_parent = ett[tier].update_sketch(update.edge.dst, delta);
-                    root_node(tier, update_idx, false) = dst_parent;
+                    root_node(tier, update_idx, false) = ett[tier].update_sketch(update.edge.dst, delta);
                 }
                 for (size_t i = 0; i < num_updates; i++) {
-                    root_node(tier, i, false)->process_updates();
+                    // root_node(tier, i, false).process_updates();
                 }
             }
         },
@@ -566,13 +555,13 @@ uint32_t BatchTiers<TreeStrategy>::_search_for_isolated_components(const parlay:
             size_t tier = i / num_updates;
             size_t update_idx = i % num_updates;
             for (bool src_or_dst : {true, false}) {
-                typename BatchTiers<TreeStrategy>::Handle root = root_node(tier, update_idx, src_or_dst);
-                typename BatchTiers<TreeStrategy>::Handle next_root = root_node(tier + 1, update_idx, src_or_dst);
-                uint32_t tier_size = root->size;
-                uint32_t next_size = next_root->size;
+                auto root = root_node(tier, update_idx, src_or_dst);
+                auto next_root = root_node(tier + 1, update_idx, src_or_dst);
+                uint32_t tier_size = root.size();
+                uint32_t next_size = next_root.size();
                 if (tier_size == next_size) {
                     // This means that the component is isolated
-                    if (root->sketch_agg.sample().result == GOOD) {
+                    if (root.sketch().sample().result == GOOD) {
                         // this means that the component is isolated
                         // std::cout << "isolation found at tier " << tier << " for update idx " << update_idx << std::endl;
                         return true;
@@ -595,7 +584,7 @@ uint32_t BatchTiers<TreeStrategy>::_search_for_isolated_components(const parlay:
 template<typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<GraphUpdate> &updates, uint32_t tier_idx) {
-    size_t num_updates = updates.size();
+    (void)updates;
     // size_t num_tiers = ett.size();
 
     // needs to be atomically updated.
@@ -621,9 +610,6 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
     // now, _updated_components contains all components that need to be
     // including ones that may have been inherited from doing links/cuts below.
     // for (size_t i = 0; i < _updated_components[tier].size(); i++) {
-    parlay::sequence<typename BatchTiers<TreeStrategy>::Handle> temp_roots;
-    std::atomic<size_t> num_temp_roots = 0;
-    temp_roots.resize(_updated_components[tier_idx].size());
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, _updated_components[tier_idx].size()),
         [&](const tbb::blocked_range<size_t>& r) {
@@ -632,14 +618,8 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                 // TODO - we can do some work to avoid checking the same component (maybe?)
                 // in case a component was previously merged already
                 // SkipListNode<SketchClass>* component_root = ett[tier].get_root(vertex_in_component);
-                typename BatchTiers<TreeStrategy>::Handle component_root = ett[tier_idx].ett_node(vertex_in_component).get_allowed_caller()->find_root_with_cas();
-                if (component_root == nullptr) {
-                    continue;
-                }
-                size_t idx = num_temp_roots.fetch_add(1);
-                temp_roots[idx] = component_root;
-                // component_root->clear_cas_flags();
-                typename BatchTiers<TreeStrategy>::Handle next_tier_root = ett[tier_idx + 1].get_root(vertex_in_component);
+                auto component_view = ett[tier_idx].component_view(vertex_in_component);
+                auto next_tier_view = ett[tier_idx + 1].component_view(vertex_in_component);
 
                 // TODO - this is no longer necessary. because we are using the DSU to keep the smallest
                 // possible set of _updated_components settings
@@ -654,11 +634,12 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
 
                 // so this should stay correct?
                 std::optional<node_id_t> previous_tier =
-                    _already_checked_components.Insert((size_t)(component_root), tier_idx);
+                    _already_checked_components.Insert(static_cast<size_t>(component_view.key()), tier_idx);
                 if (previous_tier.has_value()) {
                     continue;
                 }
-                SketchClass& ett_agg = component_root->sketch_agg;
+                // component_view.process_updates();
+                SketchClass& ett_agg = component_view.sketch();
                 // TODO - do we want to sample before? idts. but we can at least
                 // do the empty check with a special new primitive
                 SketchSample query_result = ett_agg.sample();
@@ -670,7 +651,7 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                     }
                 }
                 {
-                    if (component_root->size == next_tier_root->size) {
+                    if (component_view.size() == next_tier_view.size()) {
                         if (query_result.result == GOOD) {
                             std::lock_guard<std::mutex> guard(this->lct_and_query_ett_lock);
                             // .. and see if a path exists between the endpoints in the LCT
@@ -731,14 +712,6 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                 }
             }
         });
-    // clear cas flags:
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, num_temp_roots),
-        [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                temp_roots[i]->clear_cas_flags();
-            }
-        });
 
     // at this point, we know exactly what cuts and links we need to do at higher tiers.
     // for each tier, we'll perform the cuts and links, and then add any entries to _updated_components[tier] that
@@ -779,4 +752,4 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
 }
 
 template class BatchTiers<EulerTourTree<DefaultSketchColumn>>; 
-template class BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+template class BatchTiers<ufo::CutsetUFOTree<>>;

@@ -17,12 +17,22 @@
 #include "sketchless_euler_tour_tree.h"
 // #include "parlay_hash/unordered_set.h"
 
+// Optional capability: only trees exposing these low-level methods can use the
+// CAS sketch-aggregation fast path in BatchTiers.
+template <typename TreeStrategy>
+concept SupportsCasSketchAggFastPath = requires(TreeStrategy& tree, node_id_t u, const ColumnEntryDelta& delta) {
+    { tree.ett_node(u).get_allowed_caller()->update_sketch_atomic_to_level(delta, 1u) };
+    { tree.ett_node(u).get_allowed_caller()->find_root_with_cas() };
+    { tree.ett_node(u).get_allowed_caller()->clear_cas_flags() };
+};
+
 // template <typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class BatchTiers {
         using SketchClass = typename TreeStrategy::SketchType;
-        using Handle = typename TreeStrategy::Handle;
+    using ComponentID = typename TreeStrategy::ComponentID;
+    using ComponentView = typename TreeStrategy::ComponentView;
     private:
         size_t num_nodes;
         uint64_t seed;
@@ -51,23 +61,23 @@ class BatchTiers {
         // static thread_local parlay::sequence<ColumnEntryDelta> _deltas_buffer;
         // static thread_local SketchClass _scratch_sketch;
         // matrix of [num_tiers x ( batch_size * 2 )]
-        std::vector<parlay::sequence<Handle>> _root_nodes;
+        std::vector<parlay::sequence<ComponentView>> _root_nodes;
         
         // jagged array: track isolated components/probably isolated components. 
         // why are we doing this instead of just using root_nodes?
         
         // a vector mapping each tier to the set of its components that need
         // to be checked for isolation
-        // parlay::sequence<parlay::sequence<Handle>> _updated_components;
+        // parlay::sequence<parlay::sequence<ComponentView>> _updated_components;
         // TODO - see if we can get rid of redundant checks
         // and only do one PER component. ie if some components share the same
         // root, we need not check them.
-        // parlay::sequence<parlay::sequence<Handle>> _updated_components;
+        // parlay::sequence<parlay::sequence<ComponentView>> _updated_components;
         parlay::sequence<parlay::sequence<node_id_t>> _updated_components;
         
         // tracks components that were already checked for isolation and had their
         // associated link/cut instructions logged.
-        // parlay::sequence<Handle> _current_isolated_components;
+        // parlay::sequence<ComponentView> _current_isolated_components;
         
         // key: a root node ptr (to identify same component at current tier)
         // folly::ConcurrentHashMap<size_t, node_id_t> _already_checked_components;
@@ -208,7 +218,7 @@ class BatchTiers {
         
         
     private:
-        Handle& root_node(size_t tier, size_t update_idx, bool src_or_dst) {
+        ComponentView& root_node(size_t tier, size_t update_idx, bool src_or_dst) {
             return _root_nodes[tier][update_idx * 2 + (src_or_dst ? 0 : 1)];
         };
         void _process_sketch_aggs_only(const parlay::sequence<GraphUpdate> &updates);

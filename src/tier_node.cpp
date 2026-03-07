@@ -70,17 +70,18 @@ void TierNode<TreeStrategy>::main() {
             initialize_node(update.edge.dst);
             edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
             split_revert_buffer[i] = false;
-            unlikely_if (update.type == DELETE && ett.has_edge(update.edge.src, update.edge.dst)) {
+            const uint32_t cut_start_tier = update_buffer[i+1].cut_start_tier;
+            unlikely_if (update.type == DELETE && cut_start_tier != UINT32_MAX && tier_num >= cut_start_tier) {
                 ett.cut(update.edge.src, update.edge.dst);
                 ENDPOINT_CANARY("Cutting ETT With", update.edge.src, update.edge.dst);
                 split_revert_buffer[i] = true;
             }
             auto roots = ett.update_sketches(update.edge.src, update.edge.dst, (vec_t)edge);
             ENDPOINT_CANARY("Updating Sketch With", update.edge.src, update.edge.dst);
-            roots.first->process_updates();
+            // roots.first->process_updates();
             roots.first->sketch_agg.reset_sample_state();
             query_result_buffer[2*i] = roots.first->sketch_agg.sample().result;
-            roots.second->process_updates();
+            // roots.second->process_updates();
             roots.second->sketch_agg.reset_sample_state();
             query_result_buffer[2*i+1] = roots.second->sketch_agg.sample().result;
     
@@ -149,7 +150,8 @@ void TierNode<TreeStrategy>::main() {
         for (int update_idx = minimum_isolated_update; update_idx < end_update_idx; update_idx++) {
             GraphUpdate update = update_buffer[update_idx].update;
             edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
-            unlikely_if (update.type == DELETE && ett.has_edge(update.edge.src, update.edge.dst)) {
+            const uint32_t cut_start_tier = update_buffer[update_idx].cut_start_tier;
+            unlikely_if (update.type == DELETE && cut_start_tier != UINT32_MAX && tier_num >= cut_start_tier) {
                 ett.cut(update.edge.src, update.edge.dst);
             }
             ett.update_sketches(update.edge.src, update.edge.dst, (vec_t)edge);
@@ -172,9 +174,8 @@ void TierNode<TreeStrategy>::main() {
                         e2.v = refresh_message.endpoints.second.v;
                         for (RefreshEndpoint* e : {&e1, &e2}) {
                             e->prev_tier_size = ett.get_size(e->v);
-                            Handle root = ett.get_root(e->v);
-                            root->process_updates();
-                            SketchClass &ett_agg = root->sketch_agg;
+                            ComponentView component_view = ett.component_view(e->v);
+                            SketchClass &ett_agg = component_view.sketch();
                             ett_agg.reset_sample_state();
                             e->sketch_query_result = ett_agg.sample();
                         }

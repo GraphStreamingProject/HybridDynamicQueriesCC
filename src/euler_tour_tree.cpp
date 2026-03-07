@@ -22,59 +22,61 @@ void EulerTourTree<SketchClass, Container>::link(node_id_t u, node_id_t v) {
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
 void EulerTourTree<SketchClass, Container>::cut(node_id_t u, node_id_t v) {
-  assert(has_edge(u, v));
+  assert(_has_edge(u, v));
   ett_node(u).cut(ett_node(v), temp_sketch);
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool EulerTourTree<SketchClass, Container>::has_edge(node_id_t u, node_id_t v) {
-  return ett_node(u).has_edge_to(&ett_node(v));
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, vec_t update_idx) {
+  return ComponentView{ett_node(u).update_sketch(update_idx)};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, vec_t update_idx) {
-  return ett_node(u).update_sketch(update_idx);
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
+  return ComponentView{ett_node(u).update_sketch(delta)};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
-  return ett_node(u).update_sketch(delta);
-}
-
-template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const ColumnEntryDeltas &deltas) {
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const ColumnEntryDeltas &deltas) {
   if (deltas.size() >= 8) {
     // std::cout << "Using temp sketch for batch of size " << deltas.size() << std::endl;
     this->temp_sketch.zero_contents();
     for (const auto& delta : deltas) {
       this->temp_sketch.apply_entry_delta(delta);
     }
-    return ett_node(u).update_sketch((const SketchClass&)temp_sketch);
+    return ComponentView{ett_node(u).update_sketch((const SketchClass&)temp_sketch)};
   }
   else {
-    return ett_node(u).update_sketch(deltas);
+    return ComponentView{ett_node(u).update_sketch(deltas)};
   }
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const SketchClass &sketch) {
-  return ett_node(u).update_sketch(sketch);
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch(node_id_t u, const SketchClass &sketch) {
+  return ComponentView{ett_node(u).update_sketch(sketch)};
 }
 
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
-  return ett_node(u).update_sketch_atomic(update_idx);
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
+  return ComponentView{ett_node(u).update_sketch_atomic(update_idx)};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
-  return ett_node(u).update_sketch_atomic(delta);
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
+  return ComponentView{ett_node(u).update_sketch_atomic(delta)};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-SkipListNode<SketchClass>* EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const ColumnEntryDeltas &deltas) {
-  return ett_node(u).update_sketch_atomic(deltas);
+typename EulerTourTree<SketchClass, Container>::ComponentView
+EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const ColumnEntryDeltas &deltas) {
+  return ComponentView{ett_node(u).update_sketch_atomic(deltas)};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -187,7 +189,7 @@ void EulerTourNode<SketchClass>::delete_edge(EulerTourNode<SketchClass>* other, 
   if (node_to_delete == allowed_caller) {
     if (this->edges.empty()) {
       allowed_caller = nullptr;
-      node_to_delete->process_updates();
+      // node_to_delete->process_updates();
       // std::cout << node_to_delete << std::endl;
       // temp_sketch = std::move(node_to_delete->sketch_agg);
       temp_sketch.merge(std::move(node_to_delete->sketch_agg));
@@ -195,7 +197,7 @@ void EulerTourNode<SketchClass>::delete_edge(EulerTourNode<SketchClass>* other, 
       node_to_delete->sketch_agg = SketchClass(0, seed); // We just gave the sketch to new allowed caller
     } else {
       allowed_caller = this->edges.begin()->second;
-      node_to_delete->process_updates();
+      // node_to_delete->process_updates();
       allowed_caller->update_path_agg(node_to_delete->sketch_agg);
       node_to_delete->sketch_agg = SketchClass(0, seed); // We just gave the sketch to new allowed caller
     }

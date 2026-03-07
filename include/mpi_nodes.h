@@ -29,6 +29,7 @@ enum UpdateStatus : uint8_t { UPDATE_NORMAL = 0, UPDATE_END = 1, UPDATE_SPACE_RE
 
 typedef struct {
   GraphUpdate update;
+  uint32_t cut_start_tier = UINT32_MAX;
   UpdateStatus status = UPDATE_NORMAL;
 } UpdateMessage;
 
@@ -150,7 +151,7 @@ template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 class TierNode {
   using SketchClass = typename TreeStrategy::SketchType;
-  using Handle = typename TreeStrategy::Handle;
+  using ComponentView = typename TreeStrategy::ComponentView;
   TreeStrategy ett;
   uint32_t tier_num;
   uint32_t num_tiers;

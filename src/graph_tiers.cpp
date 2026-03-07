@@ -53,17 +53,21 @@ template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 	edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
+	uint32_t cut_start_tier = UINT32_MAX;
 	// Update the sketches of both endpoints of the edge in all tiers
 	if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
+		// NOTE - since we know the edge exists (the query ett and lct are sync'd)
+		// we know that the path_query will return exactly the weight of the edge.
+		std::pair<Edge, int8_t> cut_edge_info = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+		cut_start_tier = static_cast<uint32_t>(cut_edge_info.second);
 		link_cut_tree.cut(update.edge.src, update.edge.dst);
 		query_ett.cut(update.edge.src, update.edge.dst);
 	}
 	START(su);
-	std::atomic<bool> did_cut(false);
+	std::atomic<bool> did_cut(cut_start_tier != UINT32_MAX);
 	// #pragma omp parallel for
 	for (uint32_t i = 0; i < ett.size(); i++) {
-		if (update.type == DELETE && ett[i].has_edge(update.edge.src, update.edge.dst)) {
-			did_cut = true;
+		if (update.type == DELETE && cut_start_tier != UINT32_MAX && i >= cut_start_tier) {
 			ett[i].cut(update.edge.src, update.edge.dst);
 			ENDPOINT_CANARY("Cutting Tier " << i << " ETT With", update.edge.src, update.edge.dst);
 		}
@@ -89,15 +93,15 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 	// #pragma omp parallel for
 	for (uint32_t tier = 0; tier < ett.size()-1; tier++) {
 		// Check if the tree containing first endpoint is isolated
-		uint32_t tier_size1 = root_nodes[2*tier]->size;
-		uint32_t next_size1 = root_nodes[2*(tier+1)]->size;
+		uint32_t tier_size1 = root_nodes[2*tier].size();
+		uint32_t next_size1 = root_nodes[2*(tier+1)].size();
 		// NOTE - We know that we are a subset of the next tier's component
 		// by maintenance of variants. 
 		// thus, if the sizes are equal, we are not a proper subset
 		// but are a subset. This means we are violating 
 		if (tier_size1 == next_size1) {
-			root_nodes[2*tier]->process_updates();
-			SketchClass &ett_agg1 = root_nodes[2*tier]->sketch_agg;
+			// root_nodes[2*tier].process_updates();
+			SketchClass &ett_agg1 = root_nodes[2*tier].sketch();
 			ett_agg1.reset_sample_state();
 			SketchSample<> query_result1 = ett_agg1.sample();
 			if (query_result1.result == GOOD) {
@@ -106,11 +110,11 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			}
 		}
 		// Check if the tree containing second endpoint is isolated
-		uint32_t tier_size2 = root_nodes[2*tier+1]->size;
-		uint32_t next_size2 = root_nodes[2*(tier+1)+1]->size;
+		uint32_t tier_size2 = root_nodes[2*tier+1].size();
+		uint32_t next_size2 = root_nodes[2*(tier+1)+1].size();
 		if (tier_size2 == next_size2) {
-			root_nodes[2*tier+1]->process_updates();
-			SketchClass &ett_agg2 = root_nodes[2*tier+1]->sketch_agg;
+			// root_nodes[2*tier+1].process_updates();
+			SketchClass &ett_agg2 = root_nodes[2*tier+1].sketch();
 			ett_agg2.reset_sample_state();
 			SketchSample query_result2 = ett_agg2.sample();
 			if (query_result2.result == GOOD) {
@@ -137,9 +141,9 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 				continue;
 
 			START(agg);
-			Handle root = ett[tier].get_root(v);
-			root->process_updates();
-			SketchClass &ett_agg = root->sketch_agg;
+			ComponentView root = ett[tier].component_view(v);
+			// root.process_updates();
+			SketchClass &ett_agg = root.sketch();
 			STOP(ett_get_agg, agg);
 			START(sq);
 			ett_agg.reset_sample_state();
@@ -207,28 +211,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 std::vector<std::set<node_id_t>> GraphTiers<TreeStrategy>::get_cc() {
-	std::vector<std::set<node_id_t>> cc;
-    node_id_t n = ett[0].get_max_nodes();
-	std::vector<bool> visited(n, false);
-	int top = ett.size()-1;
-	for (node_id_t i = 0; i < n; i++) {
-        // We only need to check one representative per component.
-		if (!visited[i]) {
-            // Check if initialized? ETT might be sparse?
-            // Assuming initialized or handled by get_component_vertices returning empty.
-            
-			std::vector<node_id_t> component_vec = ett[top].get_component_vertices(i);
-            if (component_vec.empty()) continue; // Handles uninitialized/empty
-            
-			std::set<node_id_t> component;
-			for (auto v : component_vec) {
-				component.insert(v);
-                if (v < n) visited[v] = true;
-			}
-			cc.push_back(component);
-		}
-	}
-	return cc;
+	return query_ett.cc_query();
 }
 
 
