@@ -646,14 +646,18 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                 // actually, we'll keep it for now anyway.
                 // this is because the current DSU filter is just being used as a simple filter.
                 // since we arent doing any changes to it past the first isolated tier.
-                if (_already_checked_components.find((size_t)(component_root)) != _already_checked_components.end()) {
-                    // std::cout << "yerr" << std::endl;
-                    // return;
+                // Atomically claim this component root so only one thread processes it.
+
+
+                // note behavior of parlay-hash insert is it only inserts 
+                // if the key doesn't exist. (we would have used Upsert otherwise).
+
+                // so this should stay correct?
+                std::optional<node_id_t> previous_tier =
+                    _already_checked_components.Insert((size_t)(component_root), tier_idx);
+                if (previous_tier.has_value()) {
                     continue;
                 }
-                // _already_checked_components.insert_or_assign((size_t)component_root, tier);
-                // _already_checked_components[(size_t)component_root] = tier;
-                _already_checked_components.Insert((size_t)component_root, tier_idx);
                 SketchClass& ett_agg = component_root->sketch_agg;
                 // TODO - do we want to sample before? idts. but we can at least
                 // do the empty check with a special new primitive
@@ -746,11 +750,15 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
             for (size_t t = r.begin(); t != r.end(); ++t) {
                 // for (size_t t = tier + 1; t < ett.size(); t
                 for (auto &cut : _pending_cuts) {
+                    uint32_t edge_appears_at_tier = cut.second;
+                    Edge to_cut = cut.first;
                     // do not perform cut if the edge has not yet appeared (duh?)
-                    if (cut.second < t)
+                    // if (cut.second < t)
+                    // OOPS - this was the incorrected order
+                    if (t < edge_appears_at_tier)
                         continue;
                     // cut the edge in the current tier
-                    ett[t].cut(cut.first.src, cut.first.dst);
+                    ett[t].cut(to_cut.src, to_cut.dst);
                 }
                 for (const Edge &link : _pending_links) {
                     ett[t].link(link.src, link.dst);

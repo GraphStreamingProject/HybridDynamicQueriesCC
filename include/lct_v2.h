@@ -290,12 +290,13 @@ NodeMaxLCT<WeightT>* NodeMaxLCT<WeightT>::get_root() {
 
 template <typename WeightT>
 auto NodeMaxLCT<WeightT>::path_query(NodeMaxLCT<WeightT>* other) -> std::pair<std::pair<NodeMaxLCT<WeightT>*, NodeMaxLCT<WeightT>*>, WeightT> {
-   evert();
-   other->expose();
-   std::pair<std::pair<NodeMaxLCT<WeightT>*, NodeMaxLCT<WeightT>*>, WeightT> max_edge;
-   max_edge.first = get_edge_with_weight(max);
-   max_edge.second = max; 
-   return max_edge;
+  evert();
+  NodeMaxLCT<WeightT>* path_root = other->expose();
+
+  std::pair<std::pair<NodeMaxLCT<WeightT>*, NodeMaxLCT<WeightT>*>, WeightT> max_edge;
+  max_edge.second = path_root->max;
+  max_edge.first = path_root->get_edge_with_weight(max_edge.second);
+  return max_edge;
  }
  
 template <typename WeightT>
