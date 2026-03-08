@@ -8,6 +8,7 @@
 // #include <omp.h>
 #include "mpi_nodes.h"
 #include "binary_graph_stream.h"
+#include "cutsets/lct_cutset.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
 #include "util.h"
@@ -17,7 +18,8 @@ const int DEFAULT_BATCH_SIZE = 100;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 // using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
-using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
+// using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
 TEST(GraphTierSuite, mpi_mixed_speed_test) {
     int world_rank_buf;

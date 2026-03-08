@@ -208,7 +208,7 @@ public:
       return ett_node(u).generate_entry_delta(update);
   }
 
-  std::pair<SkipListNode<SketchClass>*, SkipListNode<SketchClass>*> update_sketches(node_id_t u, node_id_t v, vec_t update_idx);
+  std::pair<ComponentView, ComponentView> update_sketches(node_id_t u, node_id_t v, vec_t update_idx);
   SkipListNode<SketchClass>* get_root(node_id_t u);
   const SketchClass& get_aggregate(node_id_t u);
   uint32_t get_size(node_id_t u);

@@ -80,7 +80,8 @@ EulerTourTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const C
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
-std::pair<SkipListNode<SketchClass> *, SkipListNode<SketchClass> *>
+std::pair<typename EulerTourTree<SketchClass, Container>::ComponentView,
+          typename EulerTourTree<SketchClass, Container>::ComponentView>
 EulerTourTree<SketchClass, Container>::update_sketches(node_id_t u, node_id_t v,
                                             vec_t update_idx) {
   // Update the paths in lockstep, stopping at the first common node
@@ -91,7 +92,7 @@ EulerTourTree<SketchClass, Container>::update_sketches(node_id_t u, node_id_t v,
 	while (curr1 || curr2) {
     if (curr1 == curr2) {
       SkipListNode<>* root  = curr1->get_root();
-      return {root, root};
+      return {ComponentView{root}, ComponentView{root}};
     }
     if (curr1) {
       curr1->update_agg_entry_delta(delta);
@@ -104,7 +105,7 @@ EulerTourTree<SketchClass, Container>::update_sketches(node_id_t u, node_id_t v,
       curr2 = prev2->get_parent();
     }
 	}
-	return {prev1, prev2};
+  return {ComponentView{prev1}, ComponentView{prev2}};
 }
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)

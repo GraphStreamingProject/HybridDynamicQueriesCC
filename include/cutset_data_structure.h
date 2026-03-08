@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <utility>
 #include "types.h"
 #include "sketch_interfacing.h"
 
@@ -38,6 +39,7 @@ concept CutsetDataStructure = requires(T t, node_id_t u, node_id_t v, Sketch& s,
     { t.generate_entry_delta(u, update_idx) } -> std::same_as<ColumnEntryDelta>;
     { t.update_sketch_atomic(u, delta) } -> std::same_as<typename T::ComponentView>;
     { t.update_sketch(u, delta) } -> std::same_as<typename T::ComponentView>;
+    { t.update_sketches(u, v, update_idx) } -> std::same_as<std::pair<typename T::ComponentView, typename T::ComponentView>>;
     
     // Querying
     { t.get_size(u) } -> std::same_as<uint32_t>;

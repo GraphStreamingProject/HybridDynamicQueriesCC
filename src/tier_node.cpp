@@ -1,4 +1,5 @@
 #include "../include/mpi_nodes.h"
+#include "../include/cutsets/lct_cutset.h"
 
 
 long sketch_update_time = 0;
@@ -76,20 +77,30 @@ void TierNode<TreeStrategy>::main() {
                 ENDPOINT_CANARY("Cutting ETT With", update.edge.src, update.edge.dst);
                 split_revert_buffer[i] = true;
             }
-            auto roots = ett.update_sketches(update.edge.src, update.edge.dst, (vec_t)edge);
+            auto endpoint_views = ett.update_sketches(update.edge.src, update.edge.dst, (vec_t)edge);
             ENDPOINT_CANARY("Updating Sketch With", update.edge.src, update.edge.dst);
-            // roots.first->process_updates();
-            roots.first->sketch_agg.reset_sample_state();
-            query_result_buffer[2*i] = roots.first->sketch_agg.sample().result;
-            // roots.second->process_updates();
-            roots.second->sketch_agg.reset_sample_state();
-            query_result_buffer[2*i+1] = roots.second->sketch_agg.sample().result;
-    
-            // Prepare greedy batch size messages
-            GreedyRefreshMessage this_sizes;
-            this_sizes.size1 = roots.first->size;
-            this_sizes.size2 = roots.second->size;
-            this_sizes_buffer[i] = this_sizes;
+            if (endpoint_views.first.key() == endpoint_views.second.key()) {
+                SketchClass &shared_agg = endpoint_views.second.sketch();
+                SampleResult sampled = shared_agg.sample().result;
+                query_result_buffer[2*i] = sampled;
+                query_result_buffer[2*i+1] = sampled;
+
+                GreedyRefreshMessage this_sizes;
+                this_sizes.size1 = endpoint_views.second.size();
+                this_sizes.size2 = endpoint_views.second.size();
+                this_sizes_buffer[i] = this_sizes;
+            } else {
+                SketchClass &agg1 = endpoint_views.first.sketch();
+                query_result_buffer[2*i] = agg1.sample().result;
+                SketchClass &agg2 = endpoint_views.second.sketch();
+                query_result_buffer[2*i+1] = agg2.sample().result;
+
+                // Prepare greedy batch size messages
+                GreedyRefreshMessage this_sizes;
+                this_sizes.size1 = endpoint_views.first.size();
+                this_sizes.size2 = endpoint_views.second.size();
+                this_sizes_buffer[i] = this_sizes;
+            }
         }
         STOP(sketch_update_time, sketch_update_timer);
         START(size_message_passing_timer);
@@ -176,7 +187,6 @@ void TierNode<TreeStrategy>::main() {
                             e->prev_tier_size = ett.get_size(e->v);
                             ComponentView component_view = ett.component_view(e->v);
                             SketchClass &ett_agg = component_view.sketch();
-                            ett_agg.reset_sample_state();
                             e->sketch_query_result = ett_agg.sample();
                         }
                         RefreshMessage next_refresh_message;
@@ -225,7 +235,18 @@ void TierNode<TreeStrategy>::ett_update_tier(EttUpdateMessage message) {
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message) {
-    for (RefreshEndpoint endpoint: {message.endpoints.first, message.endpoints.second}) {
+    const bool same_component = ett.is_connected(message.endpoints.first.v, message.endpoints.second.v);
+    for (int endpoint_idx : {0, 1}) {
+        if (same_component && endpoint_idx == 1) {
+            // TODO - is there a better workaround
+            // we don't want to double broadcast the same isolation message if both endpoints are the same
+            // so this should be a no-op style message.
+            EttUpdateMessage update_message;
+            update_message.type = NOT_ISOLATED;
+            bcast(&update_message, sizeof(EttUpdateMessage), tier_num+1);
+            continue;
+        }
+        RefreshEndpoint endpoint = endpoint_idx == 0 ? message.endpoints.first : message.endpoints.second;
         // Check if the tree containing this endpoint is isolated
         uint32_t prev_tier_size = endpoint.prev_tier_size;
         uint32_t this_tier_size = ett.get_size(endpoint.v);
@@ -279,3 +300,4 @@ void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message) {
 
 template class TierNode<EulerTourTree<DefaultSketchColumn>>;
 template class TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+template class TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;

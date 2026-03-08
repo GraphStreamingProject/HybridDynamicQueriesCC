@@ -142,7 +142,7 @@ void InputNode::process_updates() {
                 std::ignore = endpoint;
                 // Receive a broadcast to see if the current tier/endpoint is isolated or not
                 EttUpdateMessage update_message;
-                bcast(&update_message, sizeof(UpdateMessage), rank);
+                bcast(&update_message, sizeof(EttUpdateMessage), rank);
                 if (update_message.type == NOT_ISOLATED) {
                     continue;
                 }

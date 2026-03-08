@@ -7,6 +7,7 @@
 #include "graph_tiers.h"
 #include "batch_tiers.h"
 #include "binary_graph_stream.h"
+#include "cutsets/lct_cutset.h"
 #include "cutsets/ufo_cutset.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
@@ -15,8 +16,10 @@
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 // using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
+using GraphTierSystem = GraphTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using GraphTierSystem = GraphTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
-using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
+// using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
+// using GraphTierSystem = BatchTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
 auto start = std::chrono::high_resolution_clock::now();

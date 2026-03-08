@@ -1,8 +1,11 @@
 #pragma once
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <utility>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -27,29 +30,32 @@ public:
 
     struct ComponentView {
         Node<SketchClass>* representative = nullptr;
-                Node<SketchClass>* aggregate_root = nullptr;
-        ComponentID component_key = 0;
 
         ComponentView() = default;
-                ComponentView(Node<SketchClass>* representative, Node<SketchClass>* aggregate_root)
-            : representative(representative),
-                            aggregate_root(aggregate_root),
-              component_key(reinterpret_cast<ComponentID>(representative)) {}
+
+        ComponentView(Node<SketchClass>* representative)
+            : representative(representative) {}
 
         ComponentID key() const {
-            return component_key;
+            assert(representative != nullptr);
+            return reinterpret_cast<ComponentID>(representative);
         }
 
         uint32_t size() const {
-            return aggregate_root ? aggregate_root->weight : 0u;
+            assert(representative != nullptr);
+            Node<SketchClass>* live_root = representative->get_root();
+            return live_root->weight;
         }
 
         SketchClass& sketch() const {
-            return aggregate_root->sketch_agg;
+            assert(representative != nullptr);
+            Node<SketchClass>* live_root = representative->get_root();
+            return live_root->sketch_agg;
         }
     };
 
     CutsetLCT(int n, uint64_t seed);
+    CutsetLCT(node_id_t n, uint32_t tier_num, int seed);
     ~CutsetLCT();
     
     void link(vertex_t u, vertex_t v);
@@ -61,6 +67,7 @@ public:
     ComponentView update_sketch(vertex_t v, const ColumnEntryDelta& delta);
     ComponentView update_sketch_atomic(vertex_t v, vec_t update_idx);
     ComponentView update_sketch_atomic(vertex_t v, const ColumnEntryDelta& delta);
+    std::pair<ComponentView, ComponentView> update_sketches(node_id_t u, node_id_t v, vec_t update_idx);
 
     ColumnEntryDelta generate_entry_delta(node_id_t u, vec_t update_idx) {
         return verts[static_cast<size_t>(u)].sketch_agg.generate_entry_delta(update_idx);
@@ -74,6 +81,15 @@ public:
         return static_cast<node_id_t>(verts.size());
     }
 
+    uint32_t num_components() {
+        std::unordered_set<Node<SketchClass>*> reps;
+        reps.reserve(verts.size());
+        for (auto& node : verts) {
+            reps.insert(node.get_representative());
+        }
+        return static_cast<uint32_t>(reps.size());
+    }
+
     ComponentID component_id(node_id_t u) {
         return component_view(u).key();
     }
@@ -81,8 +97,7 @@ public:
     ComponentView component_view(node_id_t u) {
         Node<SketchClass>* node = &verts[static_cast<size_t>(u)];
         Node<SketchClass>* representative = node->get_representative();
-        Node<SketchClass>* aggregate_root = node->get_root();
-        return ComponentView{representative, aggregate_root};
+        return ComponentView{representative};
     }
 
     bool is_initialized(node_id_t u) {
@@ -97,6 +112,7 @@ public:
     size_t space_usage_bytes() {
         return space();
     }
+    bool verify_structure();
     bool verify_structure(const std::vector<SketchClass>& base_sketches);
 private:
     uint64_t seed;
@@ -105,6 +121,12 @@ private:
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 CutsetLCT<SketchClass>::CutsetLCT(int n, uint64_t seed) : seed(seed), verts(n, seed) {}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetLCT<SketchClass>::CutsetLCT(node_id_t n, uint32_t tier_num, int seed)
+    : CutsetLCT(static_cast<int>(n), static_cast<uint64_t>(seed)) {
+    (void)tier_num;
+}
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 CutsetLCT<SketchClass>::~CutsetLCT() {}
@@ -155,12 +177,40 @@ CutsetLCT<SketchClass>::update_sketch_atomic(vertex_t v, const ColumnEntryDelta&
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+std::pair<typename CutsetLCT<SketchClass>::ComponentView,
+          typename CutsetLCT<SketchClass>::ComponentView>
+CutsetLCT<SketchClass>::update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
+    ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
+    ComponentView view_u = update_sketch(static_cast<vertex_t>(u), delta);
+    ComponentView view_v = update_sketch(static_cast<vertex_t>(v), delta);
+    return {view_u, view_v};
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 size_t CutsetLCT<SketchClass>::space() {
     size_t mem = sizeof(CutsetLCT<SketchClass>);
     for (auto& v : verts) {
         mem += v.space();
     }
     return mem;
+}
+
+template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass>::verify_structure() {
+    std::unordered_map<Node<SketchClass>*, std::vector<node_id_t>> components;
+    for (node_id_t i = 0; i < verts.size(); ++i) {
+        components[verts[i].get_representative()].push_back(i);
+    }
+    bool valid = true;
+    for (const auto& [root, leaf_indices] : components) {
+        if (root->weight != leaf_indices.size()) {
+            std::cout << "Size mismatch for root " << root
+                      << ": expected " << leaf_indices.size()
+                      << ", got " << root->weight << "\n";
+            valid = false;
+        }
+    }
+    return valid;
 }
 
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)

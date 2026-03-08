@@ -1,5 +1,6 @@
 
 #include "../include/graph_tiers.h"
+#include "../include/cutsets/lct_cutset.h"
 #include "util.h"
 #include <random>
 #include <atomic>
@@ -87,11 +88,26 @@ void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
+	node_id_t src = update.edge.src;
+	node_id_t dst = update.edge.dst;
 	// In parallel check if all tiers are not isolated
 	START(iso);
 	std::atomic<bool> isolated(false);
 	// #pragma omp parallel for
 	for (uint32_t tier = 0; tier < ett.size()-1; tier++) {
+		bool same_component = ett[tier].is_connected(src, dst);
+		if (same_component) {
+			uint32_t tier_size = root_nodes[2 * tier + 1].size();
+			uint32_t next_size = root_nodes[2 * (tier + 1) + 1].size();
+			if (tier_size == next_size) {
+				SketchClass &ett_agg = root_nodes[2 * tier + 1].sketch();
+				SketchSample<> query_result = ett_agg.sample();
+				if (query_result.result == GOOD) {
+					isolated = true;
+				}
+			}
+			continue;
+		}
 		// Check if the tree containing first endpoint is isolated
 		uint32_t tier_size1 = root_nodes[2*tier].size();
 		uint32_t next_size1 = root_nodes[2*(tier+1)].size();
@@ -102,7 +118,6 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 		if (tier_size1 == next_size1) {
 			// root_nodes[2*tier].process_updates();
 			SketchClass &ett_agg1 = root_nodes[2*tier].sketch();
-			ett_agg1.reset_sample_state();
 			SketchSample<> query_result1 = ett_agg1.sample();
 			if (query_result1.result == GOOD) {
 				isolated = true;
@@ -115,7 +130,6 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 		if (tier_size2 == next_size2) {
 			// root_nodes[2*tier+1].process_updates();
 			SketchClass &ett_agg2 = root_nodes[2*tier+1].sketch();
-			ett_agg2.reset_sample_state();
 			SketchSample query_result2 = ett_agg2.sample();
 			if (query_result2.result == GOOD) {
 				isolated = true;
@@ -129,8 +143,11 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 		return;
 	// For each tier for each endpoint of the edge
 	for (uint32_t tier = 0; tier < ett.size()-1; tier++) {
-		bool both_components_maximized = true;
-		for (node_id_t v : {update.edge.src, update.edge.dst}) {
+		bool same_component = ett[tier].is_connected(src, dst);
+		const node_id_t endpoints[2] = {src, dst};
+		size_t endpoint_count = same_component ? 1 : 2;
+		for (size_t endpoint_idx = 0; endpoint_idx < endpoint_count; ++endpoint_idx) {
+			node_id_t v = same_component ? dst : endpoints[endpoint_idx];
 			// Check if the tree containing this endpoint is isolated
 			START(size);
 			uint32_t tier_size = ett[tier].get_size(v);
@@ -146,14 +163,9 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			SketchClass &ett_agg = root.sketch();
 			STOP(ett_get_agg, agg);
 			START(sq);
-			ett_agg.reset_sample_state();
 			SketchSample query_result = ett_agg.sample();
 			STOP(sketch_query, sq);
 			
-			if (query_result.result != ZERO) {
-				both_components_maximized = false;
-			}
-
 			// Check for new edge to eliminate isolation
 			if (query_result.result != GOOD)
 				continue;
@@ -223,3 +235,4 @@ bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
 
 template class GraphTiers<EulerTourTree<DefaultSketchColumn>>;
 template class GraphTiers<CutsetUFOTree>;
+template class GraphTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;

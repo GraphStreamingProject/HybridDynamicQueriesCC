@@ -74,12 +74,12 @@ public:
         return leaves[u].contains_neighbor(&leaves[v]);
     }
     
-    std::pair<Cluster*, Cluster*> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
+    std::pair<ComponentView, ComponentView> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
         // TODO - see if this should be done differently. dont need to update in some limited cases.
         auto delta = generate_entry_delta(u, update_idx);
         auto view_u = this->update_sketch(u, delta);
         auto view_v = this->update_sketch(v, delta);
-        return {view_u.root, view_v.root};
+        return {view_u, view_v};
     }
 
     // Sketch updates
