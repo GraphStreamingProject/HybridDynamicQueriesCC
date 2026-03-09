@@ -3,11 +3,11 @@
 #
 # Usage (component-level):
 #   scripts/run_profile.sh --algo mpi --cutset ufo --stream <path>
-#     [--sketch resizable] [--hybrid] [--np 23] [--auto-build]
+#     [--sketch resizeable] [--hybrid] [--np 23] [--auto-build]
 #     [--output-dir results/profile] [--report-interval 1000000]
 #
 # Usage (direct config):
-#   scripts/run_profile.sh --config mpi_ufo_resizable --stream <path>
+#   scripts/run_profile.sh --config mpi_ufo_resizeable --stream <path>
 #
 # Other flags:
 #   --list          Show available built configs
@@ -35,5 +35,8 @@ bench_resolve_binary "profile"
 bench_build_args
 BENCH_ARGS+=(--output-dir "$OUTPUT_DIR")
 BENCH_ARGS+=(--report-interval "$REPORT_INTERVAL")
+
+# Ensure output directory exists
+mkdir -p "${OUTPUT_DIR}/${CONFIG}"
 
 bench_run

@@ -92,7 +92,7 @@
 #endif
 
 #ifdef USE_RESIZEABLE_SKETCH
-  #define SKETCH_NAME "resizable"
+  #define SKETCH_NAME "resizeable"
 #else
   #define SKETCH_NAME "fixed"
 #endif
@@ -148,18 +148,6 @@ static ProfileConfig parse_args(int argc, char** argv) {
     return cfg;
 }
 
-/**
- * Compute the "first maximal tier": the first tier i such that tier i and tier i+1
- * have the same number of components. Returns -1 if no such tier exists.
- */
-static int compute_first_maximal_tier(const std::vector<SpaceReportMessage>& reports) {
-    for (size_t t = 0; t + 1 < reports.size(); t++) {
-        if (reports[t].num_components == reports[t + 1].num_components) {
-            return static_cast<int>(reports[t].tier_num);
-        }
-    }
-    return -1;
-}
 
 /**
  * Access report_space_usage depending on system type.

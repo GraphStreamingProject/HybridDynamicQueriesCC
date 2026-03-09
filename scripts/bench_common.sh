@@ -12,7 +12,7 @@ BENCH_BUILD_DIR="${BENCH_BASE_DIR}/build"
 # Sets: CONFIG, ALGO, CUTSET, SKETCH, IS_HYBRID
 ALGO=""
 CUTSET=""
-SKETCH="resizable"   # default
+SKETCH="resizeable"   # default
 IS_HYBRID=false
 CONFIG=""
 
@@ -41,7 +41,7 @@ bench_parse_common_args() {
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
-      (*)                  bench_parse_extra_arg "$@"; shift $?;;
+      (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
     esac
   done
 
@@ -51,8 +51,18 @@ bench_parse_common_args() {
       echo "ERROR: specify either --config <name> or --algo <algo> --cutset <cutset>"
       echo "  --algo:    batch | graph | mpi"
       echo "  --cutset:  ufo | lct | ett"
-      echo "  --sketch:  fixed | resizable  (default: resizable)"
+      echo "  --sketch:  fixed | resizeable  (default: resizeable)"
       echo "  --hybrid   (flag, optional)"
+      echo ""
+      echo "Common flags:"
+      echo "  --stream <path>        Input stream file (required)"
+      echo "  --output-dir <dir>     Output directory for results"
+      echo "  --np <N>               Number of MPI processes (required for mpi)"
+      echo "  --batch-size <N>       Override batch size"
+      echo "  --height-factor <F>    Override height factor"
+      echo "  --num-tiers <N>        Override number of tiers"
+      echo "  --hybrid-threshold <N> Override hybrid threshold"
+      echo "  --auto-build           Build binary if not found"
       exit 1
     fi
     CONFIG="${ALGO}_${CUTSET}_${SKETCH}"
@@ -92,6 +102,7 @@ bench_build_args() {
   [[ -n "$HEIGHT_FACTOR" ]]    && BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
   [[ -n "$NUM_TIERS" ]]        && BENCH_ARGS+=(--num-tiers "$NUM_TIERS")
   [[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
+  return 0
 }
 
 # Run the binary, auto-wrapping with mpirun for MPI configs

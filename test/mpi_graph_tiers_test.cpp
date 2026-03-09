@@ -185,14 +185,8 @@ TEST(GraphTierSuite, mpi_memory_measure_test) {
                 auto reports = input_node.report_space_usage();
                 write_space_report_tsv(reports, report_file, !first_report, i);
                 first_report = false;
-                // Find first maximal tier: first tier i where tier i+1 has the same component count
-                int first_maximal_tier = -1;
-                for (size_t t = 0; t + 1 < reports.size(); t++) {
-                    if (reports[t].num_components == reports[t + 1].num_components) {
-                        first_maximal_tier = (int)reports[t].tier_num;
-                        break;
-                    }
-                }
+                // Track maximal tier
+                int first_maximal_tier = compute_first_maximal_tier(reports);
                 if (first_maximal_tier > max_maximal_tier) {
                     max_maximal_tier = first_maximal_tier;
                 }

@@ -96,7 +96,7 @@
 #endif
 
 #ifdef USE_RESIZEABLE_SKETCH
-  #define SKETCH_NAME "resizable"
+  #define SKETCH_NAME "resizeable"
 #else
   #define SKETCH_NAME "fixed"
 #endif

@@ -3,7 +3,7 @@
 #
 # Usage:
 #   scripts/run_experiment.sh --type speed \
-#     --configs "mpi_ufo_resizable,mpi_lct_resizable" \
+#     --configs "mpi_ufo_resizeable,mpi_lct_resizeable" \
 #     --streams "/path/kron_13,/path/kron_15" \
 #     --output-root results/ \
 #     [--np 23] [--batch-size 100] [--auto-build] \
@@ -87,13 +87,7 @@ for CONFIG_NAME in "${CONFIG_ARR[@]}"; do
 
     RUN_FLAGS=(--config "$CONFIG_NAME" --stream "$STREAM_PATH")
 
-    if [[ "$TYPE" == "speed" ]]; then
-      OUTPUT_FILE="${OUTPUT_ROOT}/speed/${CONFIG_NAME}/${STREAM_BASENAME}.tsv"
-      mkdir -p "$(dirname "$OUTPUT_FILE")"
-      RUN_FLAGS+=(--output "$OUTPUT_FILE")
-    else
-      RUN_FLAGS+=(--output-dir "${OUTPUT_ROOT}/profile")
-    fi
+    RUN_FLAGS+=(--output-dir "${OUTPUT_ROOT}/${TYPE}")
 
     RUN_FLAGS+=("${COMMON_FLAGS[@]}")
 
