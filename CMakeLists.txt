@@ -196,3 +196,94 @@ if(MPI_LINK_FLAGS)
 endif()
 
 #######
+
+#####################################################################
+# Benchmark targets
+#####################################################################
+# Common source files for each backend
+set(SHMEM_BENCH_SOURCES
+  src/skiplist.cpp
+  src/sketchless_skiplist.cpp
+  src/sketchless_euler_tour_tree.cpp
+)
+
+set(MPI_BENCH_SOURCES
+  src/skiplist.cpp
+  src/sketchless_skiplist.cpp
+  src/sketchless_euler_tour_tree.cpp
+)
+
+# Function: add_bench_targets(NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE)
+# Creates bench_speed_<NAME> and bench_profile_<NAME>
+function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE)
+  # Determine source files and link libraries based on tier algo
+  if(CUPCAKE_ALGO STREQUAL "mpi_tiers")
+    set(_SOURCES ${MPI_BENCH_SOURCES})
+    set(_EXTRA_LIBS ${MPI_LIBRARIES})
+  else()
+    set(_SOURCES ${SHMEM_BENCH_SOURCES})
+    set(_EXTRA_LIBS TBB::tbb)
+  endif()
+
+  foreach(BENCH_TYPE speed profile)
+    set(TARGET_NAME "bench_${BENCH_TYPE}_${NAME}")
+    add_executable(${TARGET_NAME}
+      test/bench_${BENCH_TYPE}.cpp
+      ${_SOURCES}
+    )
+
+    # Compile definitions for config selection
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+      CUPCAKE_ALGO_${CUPCAKE_ALGO}=1
+      CUTSET_DS_${CUTSET_DS}=1
+      USE_HYBRID=${USE_HYBRID}
+      SKETCH_BUFFER_SIZE=${SKETCH_BUFFER_SIZE}
+    )
+    if(USE_RESIZEABLE)
+      target_compile_definitions(${TARGET_NAME} PRIVATE USE_RESIZEABLE_SKETCH=1)
+    endif()
+
+    target_include_directories(${TARGET_NAME} PUBLIC include ${MPI_C_INCLUDE_PATH})
+    add_dependencies(${TARGET_NAME} GraphZeppelinVerifyCC dycon)
+    target_link_libraries(${TARGET_NAME} PRIVATE
+      GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} ${_EXTRA_LIBS}
+    )
+    target_compile_options(${TARGET_NAME} PUBLIC -fopenmp)
+    target_link_options(${TARGET_NAME} PUBLIC -fopenmp)
+  endforeach()
+endfunction()
+
+# ---- Generate benchmark targets ----
+option(BENCH_ALL "Build ALL algo×cutset×sketch×hybrid benchmark configs" OFF)
+
+if(BENCH_ALL)
+  # Full matrix: 3 algos × 3 cutsets × 2 sketches × 2 hybrid = 36 configs
+  foreach(ALGO_PAIR "batch;BATCH_TIERS" "graph;GRAPH_TIERS" "mpi;MPI_TIERS")
+    list(GET ALGO_PAIR 0 ALGO_LABEL)
+    list(GET ALGO_PAIR 1 ALGO_FLAG)
+    foreach(CUTSET_PAIR "ufo;UFO" "lct;LCT" "ett;ETT")
+      list(GET CUTSET_PAIR 0 CUTSET_LABEL)
+      list(GET CUTSET_PAIR 1 CUTSET_FLAG)
+      foreach(SKETCH_PAIR "fixed;0" "resizable;1")
+        list(GET SKETCH_PAIR 0 SKETCH_LABEL)
+        list(GET SKETCH_PAIR 1 SKETCH_FLAG)
+        add_bench_targets(${ALGO_LABEL}_${CUTSET_LABEL}_${SKETCH_LABEL}
+          ${ALGO_FLAG} ${CUTSET_FLAG} 0 ${SKETCH_FLAG})
+        add_bench_targets(${ALGO_LABEL}_${CUTSET_LABEL}_${SKETCH_LABEL}_hybrid
+          ${ALGO_FLAG} ${CUTSET_FLAG} 1 ${SKETCH_FLAG})
+      endforeach()
+    endforeach()
+  endforeach()
+else()
+  # Default: MPI × {UFO, LCT, ETT} × resizable, pure cupcake + hybrid
+  add_bench_targets(mpi_ufo_resizable          MPI_TIERS UFO 0 1)
+  add_bench_targets(mpi_lct_resizable          MPI_TIERS LCT 0 1)
+  add_bench_targets(mpi_ett_resizable          MPI_TIERS ETT 0 1)
+  add_bench_targets(mpi_ufo_resizable_hybrid   MPI_TIERS UFO 1 1)
+  add_bench_targets(mpi_lct_resizable_hybrid   MPI_TIERS LCT 1 1)
+  add_bench_targets(mpi_ett_resizable_hybrid   MPI_TIERS ETT 1 1)
+
+  # Add more one-liners here as needed, e.g.:
+  # add_bench_targets(batch_ufo_fixed  BATCH_TIERS UFO 0 0)
+endif()
+

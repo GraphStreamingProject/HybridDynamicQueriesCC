@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <unordered_set>
 #include <vector>
+#include <graph_zeppelin_common.h>
+#include <graph_tiers.h>
 
 #include <gtest/gtest.h>
 

@@ -19,7 +19,7 @@ const vec_t DEFAULT_SKETCH_ERR = 1;
 
 // using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
 using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
-// using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+//using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
 TEST(GraphTierSuite, mpi_mixed_speed_test) {
     int world_rank_buf;

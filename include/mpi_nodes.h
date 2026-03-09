@@ -28,45 +28,45 @@ enum TreeOperationType {
 
 enum UpdateStatus : uint8_t { UPDATE_NORMAL = 0, UPDATE_END = 1, UPDATE_SPACE_REPORT = 2 };
 
-typedef struct {
+struct UpdateMessage {
   GraphUpdate update;
   uint32_t cut_start_tier = UINT32_MAX;
   UpdateStatus status = UPDATE_NORMAL;
-} UpdateMessage;
+};
 
-typedef struct {
+struct EttUpdateMessage {
   TreeOperationType type = EMPTY;
   node_id_t endpoint1 = 0;
   node_id_t endpoint2 = 0;
   uint32_t start_tier = 0;
-} EttUpdateMessage;
+};
 
-typedef struct {
+struct LctQueryMessage {
   TreeOperationType type = EMPTY;
   node_id_t endpoint1 = 0;
   node_id_t endpoint2 = 0;
-} LctQueryMessage;
+};
 
-typedef struct {
-  bool connected = false;
+struct LctResponseMessage {
   edge_id_t cycle_edge = 0;
   uint32_t weight = 0;
-} LctResponseMessage;
+  bool connected = false;
+};
 
-typedef struct {
+struct RefreshEndpoint {
   node_id_t v = 0;
   uint32_t prev_tier_size = 0;
   SketchSample<vec_t> sketch_query_result;
-} RefreshEndpoint;
+};
 
-typedef struct {
+struct RefreshMessage {
   std::pair<RefreshEndpoint, RefreshEndpoint> endpoints;
-} RefreshMessage;
+};
 
-typedef struct {
+struct GreedyRefreshMessage {
   uint32_t size1 = 0;
   uint32_t size2 = 0;
-} GreedyRefreshMessage;
+};
 
 class InputNode {
   node_id_t num_nodes;

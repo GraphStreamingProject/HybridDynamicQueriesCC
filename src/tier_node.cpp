@@ -13,7 +13,7 @@ long size_message_passing_time = 0;
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 TierNode<TreeStrategy>::TierNode(node_id_t num_nodes, uint32_t tier_num, uint32_t num_tiers, int batch_size, int seed) :
-    tier_num(tier_num), num_tiers(num_tiers), batch_size(batch_size), ett(num_nodes, tier_num, seed) {
+    ett(num_nodes, tier_num, seed), tier_num(tier_num), num_tiers(num_tiers), batch_size(batch_size) {
     update_buffer = (UpdateMessage*) malloc(sizeof(UpdateMessage)*(batch_size+1));
     this_sizes_buffer = (GreedyRefreshMessage*) malloc(sizeof(GreedyRefreshMessage)*batch_size);
     next_sizes_buffer = (GreedyRefreshMessage*) malloc(sizeof(GreedyRefreshMessage)*batch_size);

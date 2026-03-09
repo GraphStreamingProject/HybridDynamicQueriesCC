@@ -1,4 +1,5 @@
 #include "../include/batch_tiers.h"
+#include "cutsets/lct_cutset.h"
 #include "util.h"
 #include <random>
 #include <atomic>
@@ -31,7 +32,7 @@
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_nodes(num_nodes), seed(seed), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed) , _already_checked_components(2048, true), _unique_update_ids(2048), _component_reps_dsu(0) {
+BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_nodes(num_nodes), seed(seed), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(2048, true) {
     // TODO - use the batch_size parameter?
     _component_reps_dsu = union_find_local<int32_t>(maximum_batch_size * 2);
 	// Algorithm parameters
@@ -71,7 +72,7 @@ BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_n
 template <typename TreeStrategy>
     requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 BatchTiers<TreeStrategy>::BatchTiers(
-    node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed) : num_nodes(num_nodes), seed(seed), link_cut_tree(num_nodes), maximum_batch_size(batch_size), query_ett(num_nodes, 0, seed), _already_checked_components(num_nodes, true), _unique_update_ids(2048), _component_reps_dsu(0) {
+    node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed) : num_nodes(num_nodes), seed(seed), maximum_batch_size(batch_size), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(num_nodes, true) {
     // TODO - use the batch_size parameter?
     _component_reps_dsu = union_find_local<int32_t>(maximum_batch_size * 2);
 
@@ -765,3 +766,4 @@ std::vector<SpaceReportMessage> BatchTiers<TreeStrategy>::report_space_usage() {
 
 template class BatchTiers<EulerTourTree<DefaultSketchColumn>>; 
 template class BatchTiers<ufo::CutsetUFOTree<>>;
+template class BatchTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;

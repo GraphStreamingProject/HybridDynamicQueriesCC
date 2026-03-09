@@ -3,6 +3,8 @@
 #include <cstring>
 #include <unistd.h> //open and close
 #include <fcntl.h>
+#include <atomic>
+#include "types.h"
 //#include "graph.h"
 
 class BadStreamException : public std::exception {
