@@ -230,7 +230,7 @@ void InputNode::end() {
      std::cout << "Number of updates: " << num_updates << std::endl;
 }
 
-std::vector<SpaceReportMessage> InputNode::report_space_usage() {
+SpaceReport InputNode::report_space_usage() {
     process_all_updates();
     // Tell all tier nodes to report their space usage
     update_buffer[0].status = UPDATE_SPACE_REPORT;
@@ -238,11 +238,14 @@ std::vector<SpaceReportMessage> InputNode::report_space_usage() {
     // Reset status so normal processing can continue
     update_buffer[0].status = UPDATE_NORMAL;
 
+    SpaceReport report;
+    report.tier_reports.resize(num_tiers);
     // Collect space reports from each tier node (ranks 1..num_tiers)
-    std::vector<SpaceReportMessage> reports(num_tiers);
     for (uint32_t i = 0; i < num_tiers; i++) {
-        MPI_Recv(&reports[i], sizeof(SpaceReportMessage), MPI_BYTE,
+        MPI_Recv(&report.tier_reports[i], sizeof(SpaceReportMessage), MPI_BYTE,
                  i + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
-    return reports;
+    report.query_tree_bytes = query_ett.space_usage_bytes();
+    report.top_level_lct_bytes = link_cut_tree.space_usage_bytes();
+    return report;
 }

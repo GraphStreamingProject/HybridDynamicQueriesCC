@@ -505,7 +505,7 @@ TEST(HybridGraphTiersSuite, omp_speed_test) {
                           << std::endl;
                           
                 // Print TSV to file
-                auto reports = hybrid_driver.sketching_algo.report_space_usage();
+                auto reports = hybrid_driver.report_space_usage();
                 write_space_report_tsv(reports, report_file, !first_report, i);
                 first_report = false;
             }

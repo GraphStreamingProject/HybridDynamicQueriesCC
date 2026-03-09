@@ -1,5 +1,6 @@
 #pragma once
 #include "types.h"
+#include "util.h"
 #include <vector>
 #include <atomic>
 #include <parlay/sequence.h>
@@ -214,7 +215,7 @@ class BatchTiers {
             return valid;
         }
 
-        std::vector<SpaceReportMessage> report_space_usage();
+        SpaceReport report_space_usage();
 
         // find the index of the highest everywhere-maximal tier.
         

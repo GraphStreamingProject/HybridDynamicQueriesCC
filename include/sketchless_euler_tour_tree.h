@@ -75,6 +75,16 @@ public:
         return *ett_nodes[u];
     }
   }
+
+  size_t space_usage_bytes() const {
+      size_t total = sizeof(*this);
+      if constexpr (std::is_same_v<Container, std::vector<SketchlessEulerTourNode>>) {
+          total += max_num_nodes * sizeof(SketchlessEulerTourNode);
+      } else {
+          total += max_num_nodes * (sizeof(SketchlessEulerTourNode*) + sizeof(SketchlessEulerTourNode));
+      }
+      return total;
+  }
   
   void initialize_node(node_id_t u) {
     // no-op with vector implementation

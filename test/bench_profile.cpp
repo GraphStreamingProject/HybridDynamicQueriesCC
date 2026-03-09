@@ -154,13 +154,9 @@ static ProfileConfig parse_args(int argc, char** argv) {
  * For hybrid systems, it's on the sketching_algo member.
  * For bare systems, it's directly on the system.
  */
-template<typename System>
-static auto get_space_reports(System& system) {
-#if IS_HYBRID
-    return system.sketching_algo.report_space_usage();
-#else
+template<typename T>
+static auto get_space_reports(T& system) {
     return system.report_space_usage();
-#endif
 }
 
 // ========== Main ==========

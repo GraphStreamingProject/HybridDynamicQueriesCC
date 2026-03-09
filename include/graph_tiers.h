@@ -99,5 +99,5 @@ public:
       return valid;
   }
 
-  std::vector<SpaceReportMessage> report_space_usage();
+  SpaceReport report_space_usage();
 };

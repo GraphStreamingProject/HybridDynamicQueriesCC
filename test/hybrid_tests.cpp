@@ -349,7 +349,7 @@ TEST(GraphTierSuite, hybrid_memory_test) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
                 
                 // Print TSV to file
-                auto reports = hybrid_manager.sketching_algo.report_space_usage();
+                auto reports = hybrid_manager.report_space_usage();
                 write_space_report_tsv(reports, report_file, !first_report, i);
                 first_report = false;
                 

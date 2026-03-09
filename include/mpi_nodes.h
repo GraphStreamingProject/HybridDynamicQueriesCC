@@ -115,7 +115,7 @@ public:
    * Triggers a space report from all TierNodes.
    * Returns a vector of (tier_num, space_bytes, num_components) per tier.
    */
-  std::vector<SpaceReportMessage> report_space_usage();
+  SpaceReport report_space_usage();
 
   void flush_transaction_log() {
     transaction_log.clear();

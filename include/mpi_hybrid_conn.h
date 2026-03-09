@@ -529,6 +529,15 @@ class HybridConnectivityManager {
         size_t get_space_usage_cf() {
             return cf_algo.getMemUsage();
         }
+        
+        HybridSpaceReport report_space_usage() {
+            HybridSpaceReport report;
+            report.cf_space_bytes = get_space_usage_cf();
+            report.driver_space_bytes = get_space_usage_driver();
+            report.recovery_sketch_space_bytes = space_usage_recovery_sketch();
+            report.sketch_forest_report = sketching_algo.report_space_usage();
+            return report;
+        }
         size_t get_space_usage_driver() {
             // get the space usage of the driver itself
             size_t total = sizeof(*this);
