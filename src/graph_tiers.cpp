@@ -233,6 +233,18 @@ bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
 	return this->query_ett.is_connected(a, b);
 }
 
+template <typename TreeStrategy>
+requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
+std::vector<SpaceReportMessage> GraphTiers<TreeStrategy>::report_space_usage() {
+    std::vector<SpaceReportMessage> reports(ett.size());
+    for (size_t i = 0; i < ett.size(); ++i) {
+        reports[i].tier_num = i;
+        reports[i].space_bytes = ett[i].space_usage_bytes();
+        reports[i].num_components = ett[i].num_components();
+    }
+    return reports;
+}
+
 template class GraphTiers<EulerTourTree<DefaultSketchColumn>>;
 template class GraphTiers<CutsetUFOTree>;
 template class GraphTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;

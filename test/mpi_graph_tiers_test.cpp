@@ -165,27 +165,26 @@ TEST(GraphTierSuite, mpi_memory_measure_test) {
         InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
         input_node.initialize_all_nodes();
         long edgecount = stream.edges();
-        // long count = 100000000;
-        // edgecount = std::min(edgecount, count);
+
+        const char* interval_env = std::getenv("MEMORY_REPORT_INTERVAL");
+        long report_interval = interval_env ? std::atol(interval_env) : 1000000;
+        const char* file_env = std::getenv("MEMORY_REPORT_FILE");
+        std::string report_file = file_env ? std::string(file_env) : "memory_report.tsv";
+        bool first_report = true;
+
         int max_maximal_tier = -1;
         auto X = std::chrono::high_resolution_clock::now();
         for (long i = 0; i < edgecount; i++) {
             // Read an update from the stream and have the input node process it
             GraphUpdate update = stream.get_edge();
             input_node.update(update);
-            unlikely_if(i%1000000 == 0 || i == edgecount-1) {
+            unlikely_if(i > 0 && (i % report_interval == 0 || i == edgecount-1)) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
+                
+                // Print TSV to file
                 auto reports = input_node.report_space_usage();
-                // Print TSV
-                std::cout << "--- SPACE_REPORT operation=" << i << " ---" << std::endl;
-                std::cout << "tier\tspace_bytes\tnum_components" << std::endl;
-                size_t total_bytes = 0;
-                for (const auto& r : reports) {
-                    std::cout << r.tier_num << "\t" << r.space_bytes << "\t" << r.num_components << std::endl;
-                    total_bytes += r.space_bytes;
-                }
-                std::cout << "total\t" << total_bytes << "\t-" << std::endl;
-                std::cout << "--- END_SPACE_REPORT ---" << std::endl;
+                write_space_report_tsv(reports, report_file, !first_report, i);
+                first_report = false;
                 // Find first maximal tier: first tier i where tier i+1 has the same component count
                 int first_maximal_tier = -1;
                 for (size_t t = 0; t + 1 < reports.size(); t++) {

@@ -484,6 +484,13 @@ TEST(HybridGraphTiersSuite, omp_speed_test) {
         uint32_t num_tiers = compute_num_tiers(stream.nodes());
         HybridConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
                                                                  seed);
+        
+        const char* interval_env = std::getenv("MEMORY_REPORT_INTERVAL");
+        long report_interval = interval_env ? std::atol(interval_env) : 1000000;
+        const char* file_env = std::getenv("MEMORY_REPORT_FILE");
+        std::string report_file = file_env ? std::string(file_env) : "memory_report.tsv";
+        bool first_report = true;
+
         int edgecount = stream.edges();
         start = std::chrono::high_resolution_clock::now();
 
@@ -491,11 +498,16 @@ TEST(HybridGraphTiersSuite, omp_speed_test) {
         for (int i = 0; i < edgecount; i++) {
             GraphUpdate update = stream.get_edge();
             hybrid_driver.update(update);
-            unlikely_if(i % 1000000000 == 0) {
+            unlikely_if(i > 0 && (i % report_interval == 0 || i == edgecount-1)) {
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file
                           << std::endl;
+                          
+                // Print TSV to file
+                auto reports = hybrid_driver.sketching_algo.report_space_usage();
+                write_space_report_tsv(reports, report_file, !first_report, i);
+                first_report = false;
             }
         }
         STOP(time, timer);

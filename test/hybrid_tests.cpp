@@ -312,7 +312,7 @@ TEST(GraphTierSuite, hybrid_memory_test) {
     bcast(&seed, sizeof(int), 0);
     std::cout << "SEED: " << seed << std::endl;
     rng.seed(seed);
-    for (int i = 0; i < world_rank; i++)
+    for (uint32_t i = 0; i < world_rank; i++)
         dist(rng);
     int tier_seed = dist(rng);
 
@@ -328,6 +328,13 @@ TEST(GraphTierSuite, hybrid_memory_test) {
             num_nodes, num_tiers, update_batch_size, seed
         );
         hybrid_manager.set_threshold(threshold);
+
+        const char* interval_env = std::getenv("MEMORY_REPORT_INTERVAL");
+        long report_interval = interval_env ? std::atol(interval_env) : 1000000;
+        const char* file_env = std::getenv("MEMORY_REPORT_FILE");
+        std::string report_file = file_env ? std::string(file_env) : "memory_report.tsv";
+        bool first_report = true;
+
         long edgecount = stream.edges();
         // long count = 100000000;
         // edgecount = std::min(edgecount, count);
@@ -336,12 +343,18 @@ TEST(GraphTierSuite, hybrid_memory_test) {
             // Read an update from the stream and have the input node process it
             GraphUpdate update = stream.get_edge();
             hybrid_manager.update(update);
-            unlikely_if(i%1000000 == 0 || i == edgecount-1) {
+            unlikely_if (i > 0 && (i % report_interval == 0 || i == edgecount-1)) {
+                auto stop = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - X);
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
-                // std::cout << "Memory usage: " << hybrid_manager.cf_algo.getMemUsage() / 1000000 << std::endl;
-                std::cout << "Sketched nodes: " << hybrid_manager.num_sketched_vertices() << " out of " << num_nodes << std::endl;
+                
+                // Print TSV to file
+                auto reports = hybrid_manager.sketching_algo.report_space_usage();
+                write_space_report_tsv(reports, report_file, !first_report, i);
+                first_report = false;
+                
                 std::cout << "--- SPACE_REPORT operation=" << i << " ---" << std::endl;
-                hybrid_manager.sketching_algo.report_space_usage_tsv(std::cout);
+                // hybrid_manager.sketching_algo.report_space_usage_tsv(std::cout); // Original line, commented out
                 std::cout << "--- END_SPACE_REPORT ---" << std::endl;
             if (i%20000000 == 0 || i == edgecount-1) {
                 std::cout << "Sketched nodes: " << hybrid_manager.sketched_node_count() << " out of " << stream.nodes() << std::endl;

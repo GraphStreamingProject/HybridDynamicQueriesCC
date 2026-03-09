@@ -246,20 +246,3 @@ std::vector<SpaceReportMessage> InputNode::report_space_usage() {
     }
     return reports;
 }
-
-void InputNode::report_space_usage_tsv(std::ostream& out) {
-    std::vector<SpaceReportMessage> reports = report_space_usage();
-    out << "tier\tspace_bytes\tnum_components" << std::endl;
-    size_t total = 0;
-    for (const auto& r : reports) {
-        out << r.tier_num << "\t" << r.space_bytes << "\t" << r.num_components << std::endl;
-        total += r.space_bytes;
-    }
-    out << "total\t" << total << "\t-" << std::endl;
-}
-
-void InputNode::report_space_usage_tsv(const std::string& file_path) {
-    std::ofstream ofs(file_path);
-    report_space_usage_tsv(ofs);
-    ofs.close();
-}

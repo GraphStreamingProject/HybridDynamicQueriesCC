@@ -214,6 +214,8 @@ class BatchTiers {
             return valid;
         }
 
+        std::vector<SpaceReportMessage> report_space_usage();
+
         // find the index of the highest everywhere-maximal tier.
         
         

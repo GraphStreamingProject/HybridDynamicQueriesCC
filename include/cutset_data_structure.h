@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 #include "types.h"
+#include "util.h"
 #include "sketch_interfacing.h"
 
 // Views are intentionally lightweight and can be refreshed via component_view(v).

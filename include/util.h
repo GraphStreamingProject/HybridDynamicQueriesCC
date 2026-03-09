@@ -1,9 +1,31 @@
 #pragma once
 #include <chrono>
 #include "types.h"
+#include <vector>
+#include <iostream>
+#include <fstream>
+#include <string>
 
+typedef struct {
+  uint32_t tier_num = 0;
+  size_t space_bytes = 0;
+  size_t num_components = 0;
+} SpaceReportMessage;
 
-extern std::string stream_file;
+inline void write_space_report_tsv(const std::vector<SpaceReportMessage>& reports, std::ostream& out, long update_idx = -1) {
+    out << "update_idx\ttier\tspace_bytes\tnum_components" << std::endl;
+    size_t total = 0;
+    for (const auto& r : reports) {
+        out << update_idx << "\t" << r.tier_num << "\t" << r.space_bytes << "\t" << r.num_components << std::endl;
+        total += r.space_bytes;
+    }
+    out << update_idx << "\ttotal\t" << total << "\t-" << std::endl;
+}
+
+inline void write_space_report_tsv(const std::vector<SpaceReportMessage>& reports, const std::string& file_path, bool append = true, long update_idx = -1) {
+    std::ofstream out(file_path, append ? std::ios_base::app : std::ios_base::out);
+    write_space_report_tsv(reports, out, update_idx);
+}extern std::string stream_file;
 extern int batch_size_arg;
 extern double height_factor_arg;
 extern int hybrid_threshold_arg;

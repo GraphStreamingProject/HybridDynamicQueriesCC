@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "types.h"
+#include "util.h"
 #include "euler_tour_tree.h"
 #include "sketchless_euler_tour_tree.h"
 // #include "link_cut_tree.h"
@@ -67,12 +68,6 @@ typedef struct {
   uint32_t size2 = 0;
 } GreedyRefreshMessage;
 
-typedef struct {
-  uint32_t tier_num = 0;
-  size_t space_bytes = 0;
-  size_t num_components = 0;
-} SpaceReportMessage;
-
 class InputNode {
   node_id_t num_nodes;
   uint32_t num_tiers;
@@ -121,18 +116,6 @@ public:
    * Returns a vector of (tier_num, space_bytes, num_components) per tier.
    */
   std::vector<SpaceReportMessage> report_space_usage();
-
-  /**
-   * Triggers a space report and writes it as a TSV to the given output stream.
-   * Columns: tier\tspace_bytes\tnum_components
-   * The last row is "total\t<sum_bytes>\t-".
-   */
-  void report_space_usage_tsv(std::ostream& out);
-
-  /**
-   * Convenience: triggers a space report and writes TSV to the given file path.
-   */
-  void report_space_usage_tsv(const std::string& file_path);
 
   void flush_transaction_log() {
     transaction_log.clear();
