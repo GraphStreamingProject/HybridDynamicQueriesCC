@@ -10,16 +10,21 @@
 #include "binary_graph_stream.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
-#include "mpi_hybrid_conn.h"
+#include "serial_hybrid_conn.h"
+#include "parallel_hybrid_conn.h"
 #include "util.h"
 
 
 const int DEFAULT_BATCH_SIZE = 100;
-const int DEFAULT_HYBRID_THRESHOLD = 1400;
+const int DEFAULT_HYBRID_THRESHOLD = 100;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
+// using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+
+using HybridManagerType = ParallelConnectivityManager<InputNode>;
+// using HybridManagerType = SerialConnectivityManager<InputNode>;
 
 // TEST(GraphTierSuite, hybrid_mixed_speed_test) {
 //     int world_rank_buf;
@@ -160,7 +165,7 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
-        HybridConnectivityManager<> hybrid_manager(
+        HybridManagerType hybrid_manager(
             num_nodes, num_tiers, update_batch_size, seed
         );
         hybrid_manager.set_threshold(threshold);
@@ -174,12 +179,18 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
             hybrid_manager.update(update);
             unlikely_if(i%1000000 == 0 || i == edgecount-1) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
-                // std::cout << "Memory usage: " << hybrid_manager.cf_algo.getMemUsage() / 1000000 << std::endl;
                 std::cout << "Sketched nodes: " << hybrid_manager.num_sketched_vertices() << " out of " << num_nodes << std::endl;
+                std::cout << "-  Total edges: " << hybrid_manager.total_edges() << std::endl;
+                std::cout << "-  Sketched edges: " << hybrid_manager.num_sketched_edges() << std::endl;
+                double percent_sketched = 100.0 * ((double)hybrid_manager.num_sketched_edges()) / ((double)hybrid_manager.total_edges());
+                std::cout << "-  Percent sketched edges: " << percent_sketched << "%" << std::endl;
+                // std::cout << "-  Direct sketched edges: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
+                double percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.total_edges());
+                std::cout << "-  Percent direct sketched edges: " << percent_direct << "%" << std::endl;
             }
         }
         // Communicate to all other nodes that the stream has ended
-        hybrid_manager.sketching_algo.end();
+        hybrid_manager.end();
         auto time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - X).count();
         std::cout << "Total time(ms): " << (time/1000) << std::endl;
 
@@ -205,7 +216,8 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
 
     BinaryGraphStream stream(stream_file, 1000000);
     uint32_t num_nodes = stream.nodes();
-    uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
+    // uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
+    uint32_t num_tiers = world_size-1;
     int nodecount = stream.nodes();
     int edgecount = stream.edges();
     if (edgecount > 100000000) edgecount = 100000000;
@@ -230,15 +242,15 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
         dist(rng);
     int tier_seed = dist(rng);
 
-    if (world_size != num_tiers+1)
-        FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
+    // if (world_size != num_tiers+1)
+    //     FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
 
     if (world_rank == 0) {
         int seed = time(NULL);
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
-        HybridConnectivityManager hybrid_driver(
+        HybridManagerType hybrid_driver(
             num_nodes, num_tiers, update_batch_size, seed
         );
         hybrid_driver.set_threshold(threshold);
@@ -262,7 +274,7 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
             std::cout << querycount << " Connectivity Queries, Time (ms):  " << time/1000 << std::endl;
             total_time += time;
         }
-        hybrid_driver.sketching_algo.end();
+        hybrid_driver.end();
 
         std::cout << "TOTAL TIME(ms): " << total_time/1000 << std::endl;
         std::cout << "QUERIES/SECOND: " << 1000000000/(total_time/1000)*1000 << std::endl;
@@ -324,7 +336,7 @@ TEST(GraphTierSuite, hybrid_memory_test) {
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
-        HybridConnectivityManager<> hybrid_manager(
+        HybridManagerType hybrid_manager(
             num_nodes, num_tiers, update_batch_size, seed
         );
         hybrid_manager.set_threshold(threshold);
@@ -366,11 +378,14 @@ TEST(GraphTierSuite, hybrid_memory_test) {
                 std::cout << "-  Sketched edges: " << hybrid_manager.num_sketched_edges() << std::endl;
                 double percent_sketched = 100.0 * ((double)hybrid_manager.num_sketched_edges()) / ((double)hybrid_manager.total_edges());
                 std::cout << "-  Percent sketched edges: " << percent_sketched << "%" << std::endl;
+                std::cout << "-  Direct sketched edges: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
+                double percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.total_edges());
+                std::cout << "-  Percent direct sketched edges: " << percent_direct << "%" << std::endl;
             }
             }
         }
         // Communicate to all other nodes that the stream has ended
-        hybrid_manager.sketching_algo.end();
+        hybrid_manager.end();
         auto time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - X).count();
         std::cout << "Total time(ms): " << (time/1000) << std::endl;
 
@@ -422,7 +437,7 @@ TEST(GraphTiersSuite, hybrid_mini_correctness_test) {
         std::cout << "InputNode seed: " << seed << std::endl;
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
         // 
-        HybridConnectivityManager hybrid_driver(
+        HybridManagerType hybrid_driver(
             num_nodes, num_tiers, update_batch_size, seed
         );
         GraphVerifier gv(num_nodes);
@@ -456,7 +471,7 @@ TEST(GraphTiersSuite, hybrid_mini_correctness_test) {
             }
         }
         // Communicate to all other nodes that the stream has ended
-        hybrid_driver.sketching_algo.end();
+        hybrid_driver.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
         TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
@@ -501,7 +516,7 @@ TEST(GraphTiersSuite, hybrid_small_correctness_test) {
         std::cout << "InputNode seed: " << seed << std::endl;
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
         // 
-        HybridConnectivityManager hybrid_driver(
+        HybridManagerType hybrid_driver(
             num_nodes, num_tiers, update_batch_size, seed
         );
         hybrid_driver.set_threshold(10);
@@ -572,7 +587,7 @@ TEST(GraphTiersSuite, hybrid_small_correctness_test) {
             }
         }
         // Communicate to all other nodes that the stream has ended
-        hybrid_driver.sketching_algo.end();
+        hybrid_driver.end();
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;
         TierNodeSystem tier_node(num_nodes, tier_num, num_tiers, update_batch_size, tier_seed);
@@ -831,7 +846,7 @@ TEST(GraphTiersSuite, hybrid_correctness_test) {
         // initialize data structures
         // InputNode input_node(num_nodes, num_tiers, update_batch_size, seed);
         // SCCWN cluster_forest(num_nodes);
-        HybridConnectivityManager hybrid_driver(
+        HybridManagerType hybrid_driver(
             num_nodes, num_tiers, update_batch_size, seed
         );
         
@@ -854,7 +869,7 @@ TEST(GraphTiersSuite, hybrid_correctness_test) {
                 } catch (IncorrectCCException& e) {
                     std::cout << "Incorrect connected components found at update "  << i << std::endl;
                     std::cout << "GOT: " << cc.size() << std::endl;
-                    hybrid_driver.sketching_algo.end();
+                    hybrid_driver.end();
                     FAIL();
                 }
             }
@@ -864,7 +879,7 @@ TEST(GraphTiersSuite, hybrid_correctness_test) {
         file << stream_file << " passed correctness test." << std::endl;
         file.close();
         // Communicate to all other nodes that the stream has ended
-        hybrid_driver.sketching_algo.end();
+        hybrid_driver.end();
 
     } else if (world_rank < num_tiers+1) {
         int tier_num = world_rank-1;

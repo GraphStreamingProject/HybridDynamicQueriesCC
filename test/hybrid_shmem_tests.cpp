@@ -12,7 +12,8 @@
 #include "graph_tiers.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
-#include "mpi_hybrid_conn.h"
+#include "serial_hybrid_conn.h"
+#include "parallel_hybrid_conn.h"
 #include "util.h"
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
@@ -70,9 +71,9 @@ TEST(HybridGraphTiersSuite, gibbs_mixed_speed_test) {
     std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
     uint64_t seed = dist(rng);
     // GraphTierSystem gt(stream.nodes(), seed);
-    // HybridConnectivityManager<GraphTierSystem>
+    // SerialConnectivityManager<GraphTierSystem>
     uint32_t num_tiers = log2(stream.nodes()) / (log2(3) - 1);
-    HybridConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
+    SerialConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
                                                              seed);
 
     long total_update_time = 0;
@@ -156,7 +157,7 @@ TEST(HybridGraphTiersSuite, sparse_only_speed_test) {
     std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
     uint64_t seed = dist(rng);
     // GraphTierSystem gt(stream.nodes(), seed);
-    // HybridConnectivityManager<GraphTierSystem>
+    // SerialConnectivityManager<GraphTierSystem>
     uint32_t num_tiers = log2(stream.nodes()) / (log2(3) - 1);
     SCCWN<> cf_algo(stream.nodes());
 
@@ -236,9 +237,9 @@ TEST(HybridGraphTiersSuite, hybrid_memory_test) {
     std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
     uint64_t seed = dist(rng);
     // GraphTierSystem gt(stream.nodes(), seed);
-    // HybridConnectivityManager<GraphTierSystem>
+    // SerialConnectivityManager<GraphTierSystem>
     uint32_t num_tiers = log2(stream.nodes()) / (log2(3) - 1);
-    HybridConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
+    SerialConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
                                                              seed);
 
     long total_update_time = 0;
@@ -327,7 +328,7 @@ TEST(HybridGraphTiersSuite, mini_correctness_test) {
     std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
     uint64_t seed = dist(rng);
     uint32_t num_tiers = compute_num_tiers(numnodes);
-    HybridConnectivityManager<GraphTierSystem> hybrid_driver(numnodes, num_tiers, update_batch_size, seed);
+    SerialConnectivityManager<GraphTierSystem> hybrid_driver(numnodes, num_tiers, update_batch_size, seed);
     GraphVerifier gv(numnodes);
 
     // Link all of the nodes into 1 connected component
@@ -373,7 +374,7 @@ TEST(HybridGraphTiersSuite, deletion_replace_correctness_test) {
     std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
     uint64_t seed = dist(rng);
     uint32_t num_tiers = compute_num_tiers(numnodes);
-    HybridConnectivityManager<GraphTierSystem> hybrid_driver(numnodes, num_tiers, update_batch_size, seed);
+    SerialConnectivityManager<GraphTierSystem> hybrid_driver(numnodes, num_tiers, update_batch_size, seed);
     GraphVerifier gv(numnodes);
 
     // Link all of the nodes into 1 connected component
@@ -431,10 +432,10 @@ TEST(HybridGraphTiersSuite, omp_correctness_test) {
         std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
         uint64_t seed = dist(rng);
         uint32_t num_tiers = compute_num_tiers(stream.nodes());
-        HybridConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
+        SerialConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
                                                                  seed);
         int edgecount = stream.edges();
-        edgecount = 1000000;
+        // edgecount = 1000000;
         GraphVerifier gv(stream.nodes());
         start = std::chrono::high_resolution_clock::now();
 
@@ -482,7 +483,7 @@ TEST(HybridGraphTiersSuite, omp_speed_test) {
         std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
         uint64_t seed = dist(rng);
         uint32_t num_tiers = compute_num_tiers(stream.nodes());
-        HybridConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
+        SerialConnectivityManager<GraphTierSystem> hybrid_driver(stream.nodes(), num_tiers, update_batch_size,
                                                                  seed);
         
         const char* interval_env = std::getenv("MEMORY_REPORT_INTERVAL");
@@ -538,7 +539,7 @@ TEST(HybridGraphTiersSuite, query_speed_test) {
         std::uniform_int_distribution<std::mt19937::result_type> dist(0, MAX_INT);
         uint64_t sketch_seed = dist(rng);
         uint32_t num_tiers = compute_num_tiers(nodecount);
-        HybridConnectivityManager<GraphTierSystem> hybrid_driver(nodecount, num_tiers, update_batch_size,
+        SerialConnectivityManager<GraphTierSystem> hybrid_driver(nodecount, num_tiers, update_batch_size,
                                                                  sketch_seed);
         int edgecount = 150000;
 

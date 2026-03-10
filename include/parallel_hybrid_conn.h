@@ -1,21 +1,13 @@
-#include "mpi_nodes.h"
-#include "graph_tiers.h"
-#include <dycon/localTree/SCCWN.hpp>
-#include "recovery.h"
+#pragma once
 
-template <typename T>
-concept DynamicSketchConcept = requires(T t) {
-    { t.process_all_updates()} -> std::same_as<void>;
-    { t.initialize_node( std::declval<node_id_t>() ) } -> std::same_as<void>;
-    { t.uninitialize_node( std::declval<node_id_t>() ) } -> std::same_as<void>;
-    { t.initialize_all_nodes() } -> std::same_as<void>;
-    { t.get_transaction_log() } -> std::same_as<const std::vector<GraphUpdate>&>;
-    { t.update( std::declval<GraphUpdate>() ) } -> std::same_as<void>;
-    { t.space_usage_bytes() } -> std::same_as<size_t>;
-};
+#include "hybrid_conn_shared.h"
+#include <tbb/concurrent_queue.h>
+#include <thread>
+#include <atomic>
+
 
 template <typename SketchAlgoClass = InputNode> requires(DynamicSketchConcept<SketchAlgoClass>)
-class HybridConnectivityManager {
+class ParallelConnectivityManager {
     // TODO 
     public:
         // TODO - make this not public
@@ -30,6 +22,17 @@ class HybridConnectivityManager {
             return this->recovery_sketches.size();
         }
     private:
+        std::atomic<bool> worker_running{true};
+        std::atomic<uint64_t> current_seq_num{0};
+        std::atomic<uint64_t> graph_processed_seq_num{0};
+        std::atomic<uint64_t> recovery_processed_seq_num{0};
+        
+        tbb::concurrent_queue<SketchCommand> graph_sketch_queue;
+        tbb::concurrent_queue<RecoveryCommand> recovery_sketch_queue;
+        
+        std::thread graph_worker;
+        std::thread recovery_worker;
+
         // TODO - this aint a great way
         size_t MOVE_TO_SKETCH = 40;
         size_t DENSE_THRESHOLD = 2000;
@@ -58,6 +61,7 @@ class HybridConnectivityManager {
 
         size_t total_num_edges = 0;
         size_t total_sketched_edges = 0;
+        size_t total_direct_sketch_edges = 0;
         
         // buffer for when we need to collect all neighbors
         std::vector<node_id_t> _neighbors_buffer;
@@ -91,23 +95,30 @@ class HybridConnectivityManager {
             // return count;
         }
         
-        inline void insert_to_sketch(node_id_t u, node_id_t v) {
+        inline void insert_to_sketch(node_id_t u, node_id_t v, uint64_t seq_num) {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
-            sketching_algo.update(GraphUpdate{Edge{u, v}, INSERT});
-            auto edge_id = concat_pairing_fn(u, v);
-            recovery_sketches[u]->update(edge_id);
-            recovery_sketches[v]->update(edge_id);
+            
+            graph_sketch_queue.push(SketchCommand{seq_num, GraphUpdate{Edge{src, dst}, INSERT}});
+            auto edge_id = concat_pairing_fn(src, dst);
+            recovery_sketch_queue.push(RecoveryCommand{seq_num, edge_id});
             total_sketched_edges++;
         }
-        inline void delete_from_sketch(node_id_t u, node_id_t v) {
+        inline void delete_from_sketch(node_id_t u, node_id_t v, uint64_t seq_num) {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
-            sketching_algo.update(GraphUpdate{Edge{u, v}, DELETE});
-            auto edge_id = concat_pairing_fn(u, v);
-            recovery_sketches[u]->update(edge_id);
-            recovery_sketches[v]->update(edge_id);
+            
+            graph_sketch_queue.push(SketchCommand{seq_num, GraphUpdate{Edge{src, dst}, DELETE}});
+            auto edge_id = concat_pairing_fn(src, dst);
+            recovery_sketch_queue.push(RecoveryCommand{seq_num, edge_id});
             total_sketched_edges--;
+        }
+
+        void sync_queues() {
+            uint64_t target_seq = current_seq_num.load();
+            while (graph_processed_seq_num.load() < target_seq || recovery_processed_seq_num.load() < target_seq) {
+                std::this_thread::yield();
+            }
         }
         
         bool is_forest_edge_from_sketch(Edge edge) {
@@ -184,7 +195,7 @@ class HybridConnectivityManager {
                 for (node_id_t neighbor: *level_edges.second) {
                     // note that we do this for EVERY edge in the CF
                     // EXCEPT for the ones that are because of the sketching algo
-                    if (!is_forest_edge_from_sketch(Edge{vertex, neighbor})) {
+                    if (is_vertex_sketched(neighbor) && !is_forest_edge_from_sketch(Edge{vertex, neighbor})) {
                         num_pending_dense_edges[neighbor]--;
                     }
                 }
@@ -210,14 +221,67 @@ class HybridConnectivityManager {
         }
 
     public:
-        HybridConnectivityManager(node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed)
+        ParallelConnectivityManager(node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed)
             : num_nodes(num_nodes), sketching_algo(num_nodes, num_tiers, batch_size, seed), cf_algo(num_nodes), seed(seed) {
                 num_pending_dense_edges.resize(num_nodes, 0);
                 num_cf_edges.resize(num_nodes, 0);
                 num_edges.resize(num_nodes, 0);
+                
+                graph_worker = std::thread([this]() {
+                    SketchCommand cmd;
+                    while (worker_running.load()) {
+                        if (graph_sketch_queue.try_pop(cmd)) {
+                            sketching_algo.update(cmd.update);
+                            uint64_t current = graph_processed_seq_num.load();
+                            while (current < cmd.seq_num && !graph_processed_seq_num.compare_exchange_weak(current, cmd.seq_num)) {}
+                        } else {
+                            std::this_thread::yield();
+                        }
+                    }
+                    // Drain queue on shutdown
+                    while (graph_sketch_queue.try_pop(cmd)) {
+                        sketching_algo.update(cmd.update);
+                        graph_processed_seq_num.store(cmd.seq_num);
+                    }
+                });
+                
+                recovery_worker = std::thread([this]() {
+                    RecoveryCommand cmd;
+                    while (worker_running.load()) {
+                        if (recovery_sketch_queue.try_pop(cmd)) {
+                            Edge edge = inv_concat_pairing_fn(cmd.update);
+                            // TODO: Add atomics in SparseRecovery if needed, though with single thread pulling
+                            // from the dedicated queue it behaves serially and safely.
+                            // Only corner case is concurrent uninitialize_vertex_sketch deleting the object
+                            // but vertices are never removed from standard system today
+                            auto it1 = recovery_sketches.find(edge.src);
+                            if (it1 != recovery_sketches.end()) it1->second->update(cmd.update);
+                            auto it2 = recovery_sketches.find(edge.dst);
+                            if (it2 != recovery_sketches.end()) it2->second->update(cmd.update);
+                            
+                            uint64_t current = recovery_processed_seq_num.load();
+                            while (current < cmd.seq_num && !recovery_processed_seq_num.compare_exchange_weak(current, cmd.seq_num)) {}
+                        } else {
+                            std::this_thread::yield();
+                        }
+                    }
+                    // Drain queue on shutdown
+                    while (recovery_sketch_queue.try_pop(cmd)) {
+                        Edge edge = inv_concat_pairing_fn(cmd.update);
+                        auto it1 = recovery_sketches.find(edge.src);
+                        if (it1 != recovery_sketches.end()) it1->second->update(cmd.update);
+                        auto it2 = recovery_sketches.find(edge.dst);
+                        if (it2 != recovery_sketches.end()) it2->second->update(cmd.update);
+                        recovery_processed_seq_num.store(cmd.seq_num);
+                    }
+                });
             }
 
-        ~HybridConnectivityManager() {}
+        ~ParallelConnectivityManager() {
+            worker_running.store(false);
+            if (graph_worker.joinable()) graph_worker.join();
+            if (recovery_worker.joinable()) recovery_worker.join();
+        }
         void flush_edges_to_sketch(node_id_t vertex_to_flush) {
             // 1) find all edges incident to vertex_to_flush AND to a dense edge
             _neighbors_buffer.clear();
@@ -253,9 +317,10 @@ class HybridConnectivityManager {
             
             // 3) insert them into the sketching algo
             // AND the recovery sketches
+            uint64_t seq = ++current_seq_num;
             for (node_id_t neighbor: _neighbors_buffer) {
                 if (neighbor != vertex_to_flush) {
-                    insert_to_sketch(vertex_to_flush, neighbor);
+                    insert_to_sketch(vertex_to_flush, neighbor, seq);
                 }
             }
             // clear pending_num_dense_edges for this vertex
@@ -284,6 +349,7 @@ class HybridConnectivityManager {
             likely_if (num_edges[vertex] > MOVE_TO_SKETCH / 4) {
                 return false;
             }
+            sync_queues();
             // likely_if (!recovery_sketches[vertex]->worth_recovery_attempt()) {
             //     return false;
             // }
@@ -363,7 +429,9 @@ class HybridConnectivityManager {
                 if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                     if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
                         // std::cout << "Inserting edge from sketching algo: " <<  update.edge.src << ", "<< update.edge.dst << std::endl;
-                        insert_to_sketch(update.edge.src, update.edge.dst);
+                        total_direct_sketch_edges++;
+                        uint64_t seq = ++current_seq_num;
+                        insert_to_sketch(update.edge.src, update.edge.dst, seq);
                         return;
                     }
                 }
@@ -428,11 +496,14 @@ class HybridConnectivityManager {
                     edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                     // if edge comes from sketching algo:
                     if (edges_from_sketch.find(edge_id) != edges_from_sketch.end()) {
+                        sync_queues(); // wait for sketch system to process its backlog to find valid replacements
                         // std::cout << "Connectivity edge from sketching algo: " <<  update.edge.src << ", "<< update.edge.dst << std::endl;
                         // case a)
                         // deleting from sketching algo
-                        delete_from_sketch(update.edge.src, update.edge.dst);
+                        uint64_t seq = ++current_seq_num;
+                        delete_from_sketch(update.edge.src, update.edge.dst, seq);
                         // TODO - can we be lazier about this?
+                        sync_queues(); // wait for deletion to persist
                         sketching_algo.process_all_updates();                    
                         flush_transaction_log();
                         check_and_perform_recovery(update.edge.src);
@@ -467,9 +538,10 @@ class HybridConnectivityManager {
                     // non_tree_deletion_buffer.push_back(concat_pairing_fn(update.edge.src, update.edge.dst));
                     if (non_tree_deletion_buffer.size() >= 100) {
                         // std::cout << "Flushing non-tree deletion buffer of size: " << non_tree_deletion_buffer.size() << std::endl;
+                        uint64_t seq = ++current_seq_num;
                         for (edge_id_t edge_id: non_tree_deletion_buffer) {
                             Edge edge = inv_concat_pairing_fn(edge_id);
-                            delete_from_sketch(edge.src, edge.dst);
+                            delete_from_sketch(edge.src, edge.dst, seq);
                             check_and_perform_recovery(edge.src);
                             check_and_perform_recovery(edge.dst);
                         }
@@ -489,12 +561,15 @@ class HybridConnectivityManager {
         }
 
         bool connectivity_query(node_id_t a, node_id_t b) {
+            // TODO - figure out if this is necessary
+            // sync_queues();
             sketching_algo.process_all_updates();
             flush_transaction_log();
             return cf_algo.is_connected(a, b);
         }
         
         std::vector<std::set<node_id_t>> cc_query() {
+            // sync_queues();
             sketching_algo.process_all_updates();
             flush_transaction_log();
             // TODO - this aint great.
@@ -524,6 +599,18 @@ class HybridConnectivityManager {
         }
         size_t num_sketched_edges() const {
             return total_sketched_edges;
+        }
+        size_t num_direct_sketch_edges() const {
+            return total_direct_sketch_edges;
+        }
+
+        void end() {
+            // Stop worker threads and drain queues first
+            worker_running.store(false);
+            if (graph_worker.joinable()) graph_worker.join();
+            if (recovery_worker.joinable()) recovery_worker.join();
+            // Now safe to call end() on the sketching algo from main thread
+            sketching_algo.end();
         }
         
         size_t get_space_usage_cf() {

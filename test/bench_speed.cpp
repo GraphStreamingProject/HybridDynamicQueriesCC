@@ -41,7 +41,7 @@
 #endif
 
 #if defined(USE_HYBRID) && USE_HYBRID
-  #include "mpi_hybrid_conn.h"
+  #include "serial_hybrid_conn.h"
 #endif
 
 // ========== Cutset DS selection ==========
@@ -76,18 +76,18 @@
   #define NEEDS_MPI 1
   #define IS_HYBRID 0
 #elif defined(CUPCAKE_ALGO_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = HybridConnectivityManager<BatchTiers<CUTSET_TYPE>>;
+  using BenchSystem = SerialConnectivityManager<BatchTiers<CUTSET_TYPE>>;
   #define TIER_NAME "batch_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_GRAPH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = HybridConnectivityManager<GraphTiers<CUTSET_TYPE>>;
+  using BenchSystem = SerialConnectivityManager<GraphTiers<CUTSET_TYPE>>;
   #define TIER_NAME "graph_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_MPI_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  // Hybrid MPI: HybridConnectivityManager<InputNode>
-  using BenchSystem = HybridConnectivityManager<>;
+  // Hybrid MPI: SerialConnectivityManager<InputNode>
+  using BenchSystem = SerialConnectivityManager<>;
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1

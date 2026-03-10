@@ -9,7 +9,12 @@ int batch_size_arg;
 double height_factor_arg;
 
 int main(int argc, char** argv) {
-  MPI_Init(&argc, &argv);
+  int provided;
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+  if (provided < MPI_THREAD_MULTIPLE) {
+      std::cerr << "Warning: MPI library does not support MPI_THREAD_MULTIPLE, provided is " << provided << std::endl;
+      // MPI_Abort(MPI_COMM_WORLD, 1);
+  }
   
   if (argc < 5) {
     std::cerr << "INCORRECT NUMBER OF ARGUMENTS." << std::endl;
