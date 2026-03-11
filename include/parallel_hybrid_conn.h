@@ -290,6 +290,7 @@ private:
     size_t total_num_edges = 0;
     size_t total_sketched_edges = 0;
     size_t total_direct_sketch_edges = 0;
+    bool pending_connectivity_work = false;
 
     std::vector<node_id_t> _neighbors_buffer;
     std::vector<edge_id_t> non_tree_deletion_buffer;
@@ -344,6 +345,16 @@ private:
         uint64_t target_seq = current_seq_num.load();
         sketch_subsystem.sync_to(target_seq);
         recovery_subsystem.sync_to(target_seq);
+    }
+
+    void sync_sketch_connectivity_if_needed() {
+        if (!pending_connectivity_work) {
+            return;
+        }
+        uint64_t target_seq = current_seq_num.load();
+        sketch_subsystem.sync_to(target_seq);
+        flush_transaction_log();
+        pending_connectivity_work = false;
     }
 
     bool is_forest_edge_from_sketch(Edge edge) {
@@ -443,6 +454,10 @@ public:
             }
         }
 
+        if (!_neighbors_buffer.empty()) {
+            pending_connectivity_work = true;
+        }
+
         num_pending_dense_edges[vertex_to_flush] = 0;
     }
 
@@ -463,6 +478,9 @@ public:
     }
 
     void update(GraphUpdate update) {
+        // Keep sketch-origin edge bookkeeping reasonably fresh without stalling updates.
+        flush_transaction_log();
+
         if (update.edge.src == update.edge.dst) {
             std::cout << "WARNING: self-loop detected on vertex " << update.edge.src << std::endl;
             return;
@@ -516,10 +534,8 @@ public:
             if (this->is_edge_in_cf(update.edge)) {
                 edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                 if (edges_from_sketch.find(edge_id) != edges_from_sketch.end()) {
-                    sync_queues();
                     enqueue_delete_from_sketch(update.edge.src, update.edge.dst);
-                    sync_queues();
-                    flush_transaction_log();
+                    pending_connectivity_work = true;
                     check_and_perform_recovery(update.edge.src);
                     check_and_perform_recovery(update.edge.dst);
                 } else {
@@ -534,16 +550,20 @@ public:
             } else {
                 // Non-tree edges live only in the sketch path, so delete them immediately.
                 enqueue_delete_from_sketch(update.edge.src, update.edge.dst);
+                pending_connectivity_work = true;
                 check_and_perform_recovery(update.edge.src);
                 check_and_perform_recovery(update.edge.dst);
-                flush_transaction_log();
             }
         }
     }
 
     bool connectivity_query(node_id_t a, node_id_t b) {
-        sync_queues();
-        flush_transaction_log();
+        if (pending_connectivity_work) {
+            // Connectivity may still depend on sketch-origin commits.
+            sync_queues();
+            flush_transaction_log();
+            pending_connectivity_work = false;
+        }
         return cf_algo.is_connected(a, b);
     }
 
@@ -553,8 +573,11 @@ public:
     }
 
     std::vector<std::set<node_id_t>> cc_query() {
-        sync_queues();
-        flush_transaction_log();
+        if (pending_connectivity_work) {
+            sync_queues();
+            flush_transaction_log();
+            pending_connectivity_work = false;
+        }
         std::vector<std::set<node_id_t>> ret;
         std::unordered_map<uint64_t, std::set<node_id_t>> component_map;
         for (node_id_t i = 0; i < num_nodes; i++) {
