@@ -22,7 +22,9 @@ using namespace ufo;
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 class Node;
 
-template<typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template<typename SketchClass = DefaultSketchColumn,
+         typename Container = std::vector<Node<SketchClass>>>
+requires(SketchColumnConcept<SketchClass, vec_t>)
 class CutsetLCT {
 public:
     using SketchType = SketchClass;
@@ -70,7 +72,7 @@ public:
     std::pair<ComponentView, ComponentView> update_sketches(node_id_t u, node_id_t v, vec_t update_idx);
 
     ColumnEntryDelta generate_entry_delta(node_id_t u, vec_t update_idx) {
-        return verts[static_cast<size_t>(u)].sketch_agg.generate_entry_delta(update_idx);
+        return lct_node(u).sketch_agg.generate_entry_delta(update_idx);
     }
 
     uint32_t get_size(node_id_t u) {
@@ -78,14 +80,14 @@ public:
     }
 
     node_id_t get_max_nodes() {
-        return static_cast<node_id_t>(verts.size());
+        return max_num_nodes;
     }
 
     uint32_t num_components() {
         std::unordered_set<Node<SketchClass>*> reps;
-        reps.reserve(verts.size());
-        for (auto& node : verts) {
-            reps.insert(node.get_representative());
+        for (node_id_t i = 0; i < max_num_nodes; ++i) {
+            if (!is_initialized(i)) continue;
+            reps.insert(lct_node(i).get_representative());
         }
         return static_cast<uint32_t>(reps.size());
     }
@@ -95,18 +97,52 @@ public:
     }
 
     ComponentView component_view(node_id_t u) {
-        Node<SketchClass>* node = &verts[static_cast<size_t>(u)];
+        Node<SketchClass>* node = &lct_node(u);
         Node<SketchClass>* representative = node->get_representative();
         return ComponentView{representative};
     }
 
     bool is_initialized(node_id_t u) {
-        return static_cast<size_t>(u) < verts.size();
+        if constexpr (std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            return u < verts.size();
+        } else {
+            return verts.find(u) != verts.end();
+        }
     }
-    void initialize_node(node_id_t) {}
-    void uninitialize_node(node_id_t) {}
-    void initialize_all_nodes() {}
-    void initialize_all_nodes(node_id_t) {}
+    void initialize_node(node_id_t u) {
+        if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            if (verts.find(u) == verts.end()) {
+                verts[u] = new Node<SketchClass>(seed);
+            }
+        }
+    }
+    void uninitialize_node(node_id_t u) {
+        if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            assert(verts.find(u) != verts.end());
+            delete verts[u];
+            verts.erase(u);
+        }
+    }
+    void initialize_all_nodes() {
+        for (node_id_t i = 0; i < max_num_nodes; ++i) {
+            initialize_node(i);
+        }
+    }
+    void initialize_all_nodes(node_id_t until) {
+        for (node_id_t i = 0; i < until; ++i) {
+            initialize_node(i);
+        }
+    }
+    
+    Node<SketchClass>& lct_node(node_id_t u) {
+        if constexpr (std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            assert(u < verts.size());
+            return verts[u];
+        } else {
+            assert(verts.find(u) != verts.end());
+            return *verts[u];
+        }
+    }
 
     size_t space();
     size_t space_usage_bytes() {
@@ -115,48 +151,60 @@ public:
     bool verify_structure();
     bool verify_structure(const std::vector<SketchClass>& base_sketches);
 private:
+    node_id_t max_num_nodes;
     uint64_t seed;
-    std::vector<Node<SketchClass>> verts;
+    Container verts;
 };
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-CutsetLCT<SketchClass>::CutsetLCT(int n, uint64_t seed) : seed(seed), verts(n, seed) {}
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetLCT<SketchClass, Container>::CutsetLCT(int n, uint64_t seed) : max_num_nodes(n), seed(seed) {
+    if constexpr (std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+        verts.reserve(n);
+        for (int i = 0; i < n; ++i) verts.emplace_back(seed);
+    }
+}
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-CutsetLCT<SketchClass>::CutsetLCT(node_id_t n, uint32_t tier_num, int seed)
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetLCT<SketchClass, Container>::CutsetLCT(node_id_t n, uint32_t tier_num, int seed)
     : CutsetLCT(static_cast<int>(n), static_cast<uint64_t>(seed)) {
     (void)tier_num;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-CutsetLCT<SketchClass>::~CutsetLCT() {}
-
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetLCT<SketchClass>::link(vertex_t u, vertex_t v) {
-    verts[u].link(&verts[v]);
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetLCT<SketchClass, Container>::~CutsetLCT() {
+    if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+        for (node_id_t i = 0; i < max_num_nodes; ++i) {
+            if (is_initialized(i)) delete verts[i];
+        }
+    }
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetLCT<SketchClass>::cut(vertex_t u, vertex_t v) {
-    verts[u].cut(&verts[v]);
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetLCT<SketchClass, Container>::link(vertex_t u, vertex_t v) {
+    lct_node(u).link(&lct_node(v));
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetLCT<SketchClass>::is_connected(vertex_t u, vertex_t v) {
-    return verts[u].get_representative() == verts[v].get_representative();
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetLCT<SketchClass, Container>::cut(vertex_t u, vertex_t v) {
+    lct_node(u).cut(&lct_node(v));
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetLCT<SketchClass>::ComponentView
-CutsetLCT<SketchClass>::update_sketch(vertex_t v, vec_t update_idx) {
-    ColumnEntryDelta delta = verts[v].sketch_agg.generate_entry_delta(update_idx);
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass, Container>::is_connected(vertex_t u, vertex_t v) {
+    return lct_node(u).get_representative() == lct_node(v).get_representative();
+}
+
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetLCT<SketchClass, Container>::ComponentView
+CutsetLCT<SketchClass, Container>::update_sketch(vertex_t v, vec_t update_idx) {
+    ColumnEntryDelta delta = lct_node(v).sketch_agg.generate_entry_delta(update_idx);
     return update_sketch(v, delta);
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetLCT<SketchClass>::ComponentView
-CutsetLCT<SketchClass>::update_sketch(vertex_t v, const ColumnEntryDelta& delta) {
-    Node<SketchClass>* curr = &verts[v];
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetLCT<SketchClass, Container>::ComponentView
+CutsetLCT<SketchClass, Container>::update_sketch(vertex_t v, const ColumnEntryDelta& delta) {
+    Node<SketchClass>* curr = &lct_node(v);
     while (curr) {
         curr->sketch_agg.apply_entry_delta(delta);
         curr = curr->parent;
@@ -164,42 +212,53 @@ CutsetLCT<SketchClass>::update_sketch(vertex_t v, const ColumnEntryDelta& delta)
     return component_view(static_cast<node_id_t>(v));
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetLCT<SketchClass>::ComponentView
-CutsetLCT<SketchClass>::update_sketch_atomic(vertex_t v, vec_t update_idx) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetLCT<SketchClass, Container>::ComponentView
+CutsetLCT<SketchClass, Container>::update_sketch_atomic(vertex_t v, vec_t update_idx) {
     return update_sketch(v, update_idx);
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetLCT<SketchClass>::ComponentView
-CutsetLCT<SketchClass>::update_sketch_atomic(vertex_t v, const ColumnEntryDelta& delta) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetLCT<SketchClass, Container>::ComponentView
+CutsetLCT<SketchClass, Container>::update_sketch_atomic(vertex_t v, const ColumnEntryDelta& delta) {
     return update_sketch(v, delta);
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-std::pair<typename CutsetLCT<SketchClass>::ComponentView,
-          typename CutsetLCT<SketchClass>::ComponentView>
-CutsetLCT<SketchClass>::update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+std::pair<typename CutsetLCT<SketchClass, Container>::ComponentView,
+          typename CutsetLCT<SketchClass, Container>::ComponentView>
+CutsetLCT<SketchClass, Container>::update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     ComponentView view_u = update_sketch(static_cast<vertex_t>(u), delta);
     ComponentView view_v = update_sketch(static_cast<vertex_t>(v), delta);
     return {view_u, view_v};
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-size_t CutsetLCT<SketchClass>::space() {
-    size_t mem = sizeof(CutsetLCT<SketchClass>);
-    for (auto& v : verts) {
-        mem += v.space();
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+size_t CutsetLCT<SketchClass, Container>::space() {
+    size_t mem = sizeof(CutsetLCT<SketchClass, Container>);
+    if constexpr (std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+        mem += sizeof(Node<SketchClass>) * verts.capacity();
+    } else {
+        mem += sizeof(std::pair<node_id_t, Node<SketchClass>*>*) * verts.bucket_count();
+    }
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            mem += lct_node(i).space();
+        } else {
+            mem += lct_node(i).space() - sizeof(Node<SketchClass>); 
+        }
     }
     return mem;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetLCT<SketchClass>::verify_structure() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass, Container>::verify_structure() {
     std::unordered_map<Node<SketchClass>*, std::vector<node_id_t>> components;
-    for (node_id_t i = 0; i < verts.size(); ++i) {
-        components[verts[i].get_representative()].push_back(i);
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        components[lct_node(i).get_representative()].push_back(i);
     }
     bool valid = true;
     for (const auto& [root, leaf_indices] : components) {
@@ -213,11 +272,12 @@ bool CutsetLCT<SketchClass>::verify_structure() {
     return valid;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetLCT<SketchClass>::verify_structure(const std::vector<SketchClass>& base_sketches) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetLCT<SketchClass, Container>::verify_structure(const std::vector<SketchClass>& base_sketches) {
     std::unordered_map<Node<SketchClass>*, std::vector<node_id_t>> components;
-    for (node_id_t i = 0; i < verts.size(); ++i) {
-        components[verts[i].get_representative()].push_back(i);
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        components[lct_node(i).get_representative()].push_back(i);
     }
     bool valid = true;
     for (const auto& [root, leaf_indices] : components) {
@@ -228,7 +288,7 @@ bool CutsetLCT<SketchClass>::verify_structure(const std::vector<SketchClass>& ba
             std::cout << "Root address: " << root << " Leaf count: " << leaf_indices.size() << "\n";
             valid = false;
         }
-        SketchClass expected_sketch(SketchClass::suggest_capacity(verts.size()), seed);
+        SketchClass expected_sketch(SketchClass::suggest_capacity(max_num_nodes), seed);
         for (node_id_t idx : leaf_indices) {
             expected_sketch.merge(base_sketches[idx]);
         }

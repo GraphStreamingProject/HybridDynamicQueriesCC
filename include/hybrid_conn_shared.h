@@ -3,7 +3,10 @@
 #include "mpi_nodes.h"
 #include "graph_tiers.h"
 #include "types.h"
+#ifndef DYCON_SCCWN_HPP_INCLUDED
+#define DYCON_SCCWN_HPP_INCLUDED
 #include <dycon/localTree/SCCWN.hpp>
+#endif
 #include "recovery.h"
 #include <concepts>
 

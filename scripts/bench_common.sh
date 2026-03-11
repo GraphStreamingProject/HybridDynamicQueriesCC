@@ -48,13 +48,17 @@ bench_parse_common_args() {
   # Build config name from components if --config not given directly
   if [[ -z "$CONFIG" ]]; then
     if [[ -z "$ALGO" || -z "$CUTSET" ]]; then
-      echo "ERROR: specify either --config <name> or --algo <algo> --cutset <cutset>"
-      echo "  --algo:    batch | graph | mpi"
-      echo "  --cutset:  ufo | lct | ett"
-      echo "  --sketch:  fixed | resizeable  (default: resizeable)"
-      echo "  --hybrid   (flag, optional)"
-      echo ""
-      echo "Common flags:"
+      # allow "cf" as a pure config option directly checking if --algo is cf
+      if [[ "$ALGO" == "cf" ]]; then
+        CONFIG="cf"
+      else
+        echo "ERROR: specify either --config <name> or --algo <algo> --cutset <cutset>"
+        echo "  --algo:    batch | graph | mpi | cf"
+        echo "  --cutset:  ufo | lct | ett"
+        echo "  --sketch:  fixed | resizeable  (default: resizeable)"
+        echo "  --hybrid   (flag, optional)"
+        echo ""
+        echo "Common flags:"
       echo "  --stream <path>        Input stream file (required)"
       echo "  --output-dir <dir>     Output directory for results"
       echo "  --np <N>               Number of MPI processes (required for mpi)"
@@ -62,12 +66,16 @@ bench_parse_common_args() {
       echo "  --height-factor <F>    Override height factor"
       echo "  --num-tiers <N>        Override number of tiers"
       echo "  --hybrid-threshold <N> Override hybrid threshold"
-      echo "  --auto-build           Build binary if not found"
-      exit 1
+        echo "  --auto-build           Build binary if not found"
+        exit 1
+      fi
     fi
-    CONFIG="${ALGO}_${CUTSET}_${SKETCH}"
-    if $IS_HYBRID; then
-      CONFIG="${CONFIG}_hybrid"
+    # if it's already "cf" we can skip config building 
+    if [[ "$CONFIG" != "cf" ]]; then
+      CONFIG="${ALGO}_${CUTSET}_${SKETCH}"
+      if $IS_HYBRID; then
+        CONFIG="${CONFIG}_hybrid"
+      fi
     fi
   fi
 

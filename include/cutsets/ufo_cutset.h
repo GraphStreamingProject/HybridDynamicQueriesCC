@@ -11,7 +11,9 @@
 
 namespace ufo {
 
-template<typename SketchClass = DefaultSketchColumn> requires(SketchColumnConcept<SketchClass, vec_t>)
+template<typename SketchClass = DefaultSketchColumn,
+         typename Container = std::vector<UFOCluster<SketchClass>>>
+requires(SketchColumnConcept<SketchClass, vec_t>)
 class CutsetUFOTree {
 using Cluster = UFOCluster<SketchClass>;
 public:
@@ -71,7 +73,7 @@ public:
     }
     // Debug-only helper:
     bool _has_edge(node_id_t u, node_id_t v) {
-        return leaves[u].contains_neighbor(&leaves[v]);
+        return ufo_node(u).contains_neighbor(&ufo_node(v));
     }
     
     std::pair<ComponentView, ComponentView> update_sketches(node_id_t u, node_id_t v, vec_t update_idx) {
@@ -88,7 +90,7 @@ public:
     ComponentView update_sketch_atomic(node_id_t u, vec_t update_idx);
     ComponentView update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta);
     ColumnEntryDelta generate_entry_delta(node_id_t u, vec_t update) {
-        return leaves[u].sketch_agg.generate_entry_delta(update);
+        return ufo_node(u).sketch_agg.generate_entry_delta(update);
     }
 
     // Querying
@@ -96,7 +98,7 @@ public:
         return get_root(u)->size;
     }
     node_id_t get_max_nodes() {
-        return static_cast<node_id_t>(leaves.size());
+        return max_num_nodes;
     }
     ComponentID component_id(node_id_t u) {
         return reinterpret_cast<ComponentID>(get_root(u));
@@ -105,40 +107,69 @@ public:
         return ComponentView{get_root(u)};
     }
     Cluster* get_root(node_id_t u) {
-        return leaves[u].get_root();
+        return ufo_node(u).get_root();
     }
     std::vector<node_id_t> get_component_vertices(node_id_t u);
 
     // Maintenance
+    // Container methods
     bool is_initialized(node_id_t u) {
-        return u < leaves.size();
+        if constexpr (std::is_same_v<Container, std::vector<Cluster>>) {
+            return u < leaves.size();
+        } else {
+            return leaves.find(u) != leaves.end();
+        }
     }
     void initialize_node(node_id_t u) {
-        // no-op: leaves are pre-allocated in constructor
+        if constexpr (!std::is_same_v<Container, std::vector<Cluster>>) {
+            if (leaves.find(u) == leaves.end()) {
+                leaves[u] = new Cluster(seed_);
+                leaves[u]->size = 1;
+            }
+        }
     }
     void uninitialize_node(node_id_t u) {
-        // no-op for vector-based storage
+        if constexpr (!std::is_same_v<Container, std::vector<Cluster>>) {
+            assert(leaves.find(u) != leaves.end());
+            delete leaves[u];
+            leaves.erase(u);
+        }
     }
     void initialize_all_nodes() {
-        // no-op: leaves are pre-allocated in constructor
+        for (node_id_t i = 0; i < max_num_nodes; ++i) {
+            initialize_node(i);
+        }
     }
     void initialize_all_nodes(node_id_t until) {
-        // no-op: leaves are pre-allocated in constructor
+        for (node_id_t i = 0; i < until; ++i) {
+            initialize_node(i);
+        }
     }
     size_t space_usage_bytes() {
         return space();
     }
     uint32_t num_components() {
         std::unordered_set<Cluster*> roots;
-        for (node_id_t i = 0; i < (node_id_t)leaves.size(); ++i) {
-            roots.insert(leaves[i].get_root());
+        for (node_id_t i = 0; i < max_num_nodes; ++i) {
+            if (!is_initialized(i)) continue;
+            roots.insert(ufo_node(i).get_root());
         }
         return roots.size();
     }
 
+    Cluster& ufo_node(node_id_t u) {
+        if constexpr (std::is_same_v<Container, std::vector<Cluster>>) {
+            assert(u < leaves.size());
+            return leaves[u];
+        } else {
+            assert(leaves.find(u) != leaves.end());
+            return *leaves[u];
+        }
+    }
+
     // Direct leaf access (mirrors ETT's ett_node for BatchTiers compatibility)
     Cluster& ett_node(node_id_t u) {
-        return leaves[u];
+        return ufo_node(u);
     }
 
     // Container for BatchTiers compatibility (size query)
@@ -149,7 +180,8 @@ public:
 
 private:
     // Class data and parameters
-    std::vector<Cluster> leaves;
+    node_id_t max_num_nodes;
+    Container leaves;
     std::vector<std::vector<Cluster*>> root_clusters;
     int max_level;
     std::vector<std::pair<Cluster*,vertex_t>> lower_deg[2]; // lower_deg helps to identify clusters who became low degree during a deletion update
@@ -180,8 +212,8 @@ private:
 
 // --- Constructor / Destructor ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-CutsetUFOTree<SketchClass>::CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, size_t seed)
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetUFOTree<SketchClass, Container>::CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier_num, size_t seed)
     : query_type(CONNECTIVITY), tier_num_(tier_num), seed_(static_cast<size_t>(seed)) {
     leaves.reserve(max_num_nodes);
     for (node_id_t i = 0; i < max_num_nodes; ++i) {
@@ -194,15 +226,19 @@ CutsetUFOTree<SketchClass>::CutsetUFOTree(node_id_t max_num_nodes, uint32_t tier
     ett_nodes.sz = max_num_nodes;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-CutsetUFOTree<SketchClass>::~CutsetUFOTree() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+CutsetUFOTree<SketchClass, Container>::~CutsetUFOTree() {
     // Clear all memory
     std::unordered_set<Cluster*> clusters;
-    for (auto& leaf : leaves) {
-        auto curr = leaf.parent;
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        auto curr = ufo_node(i).parent;
         while (curr) {
             clusters.insert(curr);
             curr = curr->parent;
+        }
+        if constexpr (!std::is_same_v<Container, std::vector<Cluster>>) {
+            delete leaves[i];
         }
     }
     for (auto cluster : clusters) delete cluster;
@@ -216,8 +252,8 @@ CutsetUFOTree<SketchClass>::~CutsetUFOTree() {
 
 // --- Cluster allocation ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-UFOCluster<SketchClass>* CutsetUFOTree<SketchClass>::allocate_cluster() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+UFOCluster<SketchClass>* CutsetUFOTree<SketchClass, Container>::allocate_cluster() {
     if (!free_clusters.empty()) {
         auto c = free_clusters.back();
         free_clusters.pop_back();
@@ -233,8 +269,8 @@ UFOCluster<SketchClass>* CutsetUFOTree<SketchClass>::allocate_cluster() {
     return c;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::free_cluster(UFOCluster<SketchClass>* c) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::free_cluster(UFOCluster<SketchClass>* c) {
     c->parent = nullptr;
     c->center = nullptr;
     if (c->has_neighbor_set()) [[unlikely]] delete c->get_neighbor_set();
@@ -249,13 +285,24 @@ void CutsetUFOTree<SketchClass>::free_cluster(UFOCluster<SketchClass>* c) {
 
 // --- Space / stats helpers ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-size_t CutsetUFOTree<SketchClass>::space() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+size_t CutsetUFOTree<SketchClass, Container>::space() {
     std::unordered_set<Cluster*> visited;
-    size_t memory = sizeof(CutsetUFOTree<SketchClass>);
-    for (auto& cluster : leaves) {
-        memory += cluster.calculate_size();
-        auto parent = cluster.parent;
+    size_t memory = sizeof(CutsetUFOTree<SketchClass, Container>);
+    if constexpr (std::is_same_v<Container, std::vector<Cluster>>) {
+        memory += sizeof(Cluster) * leaves.capacity();
+    } else {
+        memory += sizeof(std::pair<node_id_t, Cluster*>*) * leaves.bucket_count();
+    }
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        if constexpr (!std::is_same_v<Container, std::vector<Cluster>>) {
+            memory += ufo_node(i).calculate_size();
+        } else {
+            // inside a vector, calculcate_size already includes sizeof(Cluster), compensate capacity logic
+            memory += ufo_node(i).calculate_size() - sizeof(Cluster); 
+        }
+        auto parent = ufo_node(i).parent;
         while (parent != nullptr && visited.count(parent) == 0) {
             memory += parent->calculate_size();
             visited.insert(parent);
@@ -265,13 +312,14 @@ size_t CutsetUFOTree<SketchClass>::space() {
     return memory;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-size_t CutsetUFOTree<SketchClass>::count_nodes() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+size_t CutsetUFOTree<SketchClass, Container>::count_nodes() {
     std::unordered_set<Cluster*> visited;
     size_t node_count = 0;
-    for(auto& cluster : leaves){
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
         node_count += 1;
-        auto parent = cluster.parent;
+        auto parent = ufo_node(i).parent;
         while(parent != nullptr && visited.count(parent) == 0){
             node_count += 1;
             visited.insert(parent);
@@ -281,12 +329,13 @@ size_t CutsetUFOTree<SketchClass>::count_nodes() {
     return node_count;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-size_t CutsetUFOTree<SketchClass>::get_height() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+size_t CutsetUFOTree<SketchClass, Container>::get_height() {
     size_t max_height = 0;
-    for (vertex_t v = 0; v < leaves.size(); ++v) {
+    for (node_id_t v = 0; v < max_num_nodes; ++v) {
+        if (!is_initialized(v)) continue;
         size_t height = 0;
-        Cluster* curr = &leaves[v];
+        Cluster* curr = &ufo_node(v);
         while (curr) {
             height++;
             curr = curr->parent;
@@ -298,8 +347,8 @@ size_t CutsetUFOTree<SketchClass>::get_height() {
 
 // --- Link / Cut / Connected ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::link(vertex_t u, vertex_t v) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::link(vertex_t u, vertex_t v) {
     assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
     assert(u != v && !connected(u,v));
     max_level = 0;
@@ -309,8 +358,8 @@ void CutsetUFOTree<SketchClass>::link(vertex_t u, vertex_t v) {
     recluster_tree();
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::cut(vertex_t u, vertex_t v) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::cut(vertex_t u, vertex_t v) {
     assert(u >= 0 && u < leaves.size() && v >= 0 && v < leaves.size());
     // assert(leaves[u].contains_neighbor(&leaves[v]));
     max_level = 0;
@@ -335,15 +384,15 @@ void CutsetUFOTree<SketchClass>::cut(vertex_t u, vertex_t v) {
     recluster_tree();
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetUFOTree<SketchClass>::connected(vertex_t u, vertex_t v) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetUFOTree<SketchClass, Container>::connected(vertex_t u, vertex_t v) {
     return leaves[u].get_root() == leaves[v].get_root();
 }
 
 // --- Remove ancestors ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::remove_ancestors_old(Cluster* c, int start_level) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::remove_ancestors_old(Cluster* c, int start_level) {
     int level = start_level;  // level is always the level of cluster prev, 0 being the leaves
     auto prev = c;
     auto curr = c->parent;
@@ -445,8 +494,8 @@ void CutsetUFOTree<SketchClass>::remove_ancestors_old(Cluster* c, int start_leve
     if (level > max_level) max_level = level;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::remove_ancestors(Cluster* c, int start_level) {
     // TODO - there is a pretty big 
     // bug here. namely that we double subtract 
     // contributions in many cases.
@@ -587,8 +636,8 @@ void CutsetUFOTree<SketchClass>::remove_ancestors(Cluster* c, int start_level) {
 
 // --- Recluster tree ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::recluster_tree() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::recluster_tree() {
     for (int level = 0; level <= max_level; level++) {
         if (root_clusters[level].empty()) [[unlikely]] continue;
         // Update root cluster stats if we are collecting them
@@ -788,8 +837,8 @@ void CutsetUFOTree<SketchClass>::recluster_tree() {
     }
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::add_to_ancestors(Cluster* c, Cluster* child) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::add_to_ancestors(Cluster* c, Cluster* child) {
     auto curr = c;
     while (curr) {
         curr->size += child->size;
@@ -800,8 +849,8 @@ void CutsetUFOTree<SketchClass>::add_to_ancestors(Cluster* c, Cluster* child) {
 
 // --- Helper functions ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetUFOTree<SketchClass>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetUFOTree<SketchClass, Container>::is_high_degree_or_high_fanout(Cluster* cluster, Cluster* child, int level) {
     // if cluster has high degree (lots of neighbors at its level), or high fanout (many children), return true.
     int cluster_degree = cluster->degree > 0 ? cluster->degree : cluster->get_degree();
     if (cluster_degree > 2) [[unlikely]] return true;
@@ -811,8 +860,8 @@ bool CutsetUFOTree<SketchClass>::is_high_degree_or_high_fanout(Cluster* cluster,
     return false;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::disconnect_siblings(Cluster* c, int level) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::disconnect_siblings(Cluster* c, int level) {
     if (c->get_degree() == 1) {
         auto center = c->neighbors[0];
         if (center->parent && c->parent != center->parent) return;
@@ -872,8 +921,8 @@ void CutsetUFOTree<SketchClass>::disconnect_siblings(Cluster* c, int level) {
 
 // --- Adjacency helpers ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::insert_adjacency(Cluster* u, Cluster* v) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::insert_adjacency(Cluster* u, Cluster* v) {
     auto curr_u = u;
     auto curr_v = v;
     while (curr_u && curr_v && curr_u != curr_v) {
@@ -884,8 +933,8 @@ void CutsetUFOTree<SketchClass>::insert_adjacency(Cluster* u, Cluster* v) {
     }
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::remove_adjacency(Cluster* u, Cluster* v) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::remove_adjacency(Cluster* u, Cluster* v) {
     auto curr_u = u;
     auto curr_v = v;
     while (curr_u && curr_v && curr_u != curr_v) {
@@ -898,16 +947,16 @@ void CutsetUFOTree<SketchClass>::remove_adjacency(Cluster* u, Cluster* v) {
 
 // --- Sketch update methods ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::ComponentView
-CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, vec_t update_idx) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetUFOTree<SketchClass, Container>::ComponentView
+CutsetUFOTree<SketchClass, Container>::update_sketch(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch(u, delta);
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::ComponentView
-CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetUFOTree<SketchClass, Container>::ComponentView
+CutsetUFOTree<SketchClass, Container>::update_sketch(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta to leaf, then walk up parent chain merging into each ancestor
     Cluster* current = &leaves[u];
     current->sketch_agg.apply_entry_delta(delta);
@@ -918,16 +967,16 @@ CutsetUFOTree<SketchClass>::update_sketch(node_id_t u, const ColumnEntryDelta &d
     return ComponentView{current}; // return root view
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::ComponentView
-CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetUFOTree<SketchClass, Container>::ComponentView
+CutsetUFOTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, vec_t update_idx) {
     ColumnEntryDelta delta = generate_entry_delta(u, update_idx);
     return update_sketch_atomic(u, delta);
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-typename CutsetUFOTree<SketchClass>::ComponentView
-CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+typename CutsetUFOTree<SketchClass, Container>::ComponentView
+CutsetUFOTree<SketchClass, Container>::update_sketch_atomic(node_id_t u, const ColumnEntryDelta &delta) {
     // Apply delta atomically to leaf, then walk up parent chain
     Cluster* current = &leaves[u];
     current->sketch_agg.atomic_apply_entry_delta(delta);
@@ -940,8 +989,8 @@ CutsetUFOTree<SketchClass>::update_sketch_atomic(node_id_t u, const ColumnEntryD
 
 // --- Component vertex enumeration ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-std::vector<node_id_t> CutsetUFOTree<SketchClass>::get_component_vertices(node_id_t u) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+std::vector<node_id_t> CutsetUFOTree<SketchClass, Container>::get_component_vertices(node_id_t u) {
     Cluster* root = leaves[u].get_root();
     std::vector<node_id_t> vertices;
     // Top-down traversal via center pointers: O(component_size)
@@ -951,8 +1000,8 @@ std::vector<node_id_t> CutsetUFOTree<SketchClass>::get_component_vertices(node_i
 
 // --- Sketch aggregate recomputation ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::recompute_component_sketch(Cluster* root) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::recompute_component_sketch(Cluster* root) {
     // Top-down traversal via center pointers: O(component_size)
     root->sketch_agg = SketchClass();
     root->size = 0;
@@ -961,8 +1010,8 @@ void CutsetUFOTree<SketchClass>::recompute_component_sketch(Cluster* root) {
 
 // --- Top-down traversal helpers ---
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::walk_down_recompute(Cluster* c, Cluster* root) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::walk_down_recompute(Cluster* c, Cluster* root) {
     if (c->center == nullptr) { // leaf cluster
         root->sketch_agg.merge(c->sketch_agg);
         root->size++;
@@ -994,12 +1043,21 @@ void CutsetUFOTree<SketchClass>::walk_down_recompute(Cluster* c, Cluster* root) 
     }
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::walk_down_vertices(Cluster* c, std::vector<node_id_t>& vertices) {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::walk_down_vertices(Cluster* c, std::vector<node_id_t>& vertices) {
     if (c->center == nullptr) { // leaf cluster — find its index
-        size_t idx = static_cast<size_t>(c - &leaves[0]);
-        if (idx < leaves.size()) {
-            vertices.push_back(static_cast<node_id_t>(idx));
+        if constexpr (std::is_same_v<Container, std::vector<Cluster>>) {
+            size_t idx = static_cast<size_t>(c - &ufo_node(0));
+            if (idx < max_num_nodes) {
+                vertices.push_back(static_cast<node_id_t>(idx));
+            }
+        } else {
+            for (const auto& [idx, ptr] : leaves) {
+                if (ptr == c) {
+                    vertices.push_back(idx);
+                    break;
+                }
+            }
         }
         return;
     }
@@ -1027,11 +1085,12 @@ void CutsetUFOTree<SketchClass>::walk_down_vertices(Cluster* c, std::vector<node
     }
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-bool CutsetUFOTree<SketchClass>::verify_structure() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+bool CutsetUFOTree<SketchClass, Container>::verify_structure() {
     std::unordered_map<Cluster*, std::vector<node_id_t>> components;
-    for (node_id_t i = 0; i < leaves.size(); ++i) {
-        components[leaves[i].get_root()].push_back(i);
+    for (node_id_t i = 0; i < max_num_nodes; ++i) {
+        if (!is_initialized(i)) continue;
+        components[ufo_node(i).get_root()].push_back(i);
     }
 
     bool valid = true;
@@ -1044,9 +1103,9 @@ bool CutsetUFOTree<SketchClass>::verify_structure() {
             valid = false;
         }
 
-        SketchClass expected_sketch(SketchClass::suggest_capacity(leaves.size()), seed_);
+        SketchClass expected_sketch(SketchClass::suggest_capacity(max_num_nodes), seed_);
         for (node_id_t idx : leaf_indices) {
-            expected_sketch.merge(leaves[idx].sketch_agg);
+            expected_sketch.merge(ufo_node(idx).sketch_agg);
         }
 
         expected_sketch.merge(root->sketch_agg);
@@ -1058,14 +1117,20 @@ bool CutsetUFOTree<SketchClass>::verify_structure() {
     return valid;
 }
 
-template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
-void CutsetUFOTree<SketchClass>::print_tree() {
+template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
+void CutsetUFOTree<SketchClass, Container>::print_tree() {
     std::multimap<Cluster*, Cluster*> clusters;
     std::multimap<Cluster*, Cluster*> next_clusters;
     std::cout << "========================= LEAVES =========================" << std::endl;
     std::unordered_map<Cluster*, vertex_t> vertex_map;
-    for (int i = 0; i < this->leaves.size(); i++) vertex_map.insert({&leaves[i], i});
-    for (int i = 0; i < this->leaves.size(); i++) clusters.insert({leaves[i].parent, &leaves[i]});
+    for (node_id_t i = 0; i < max_num_nodes; i++) {
+        if (!is_initialized(i)) continue;
+        vertex_map.insert({&ufo_node(i), i});
+    }
+    for (node_id_t i = 0; i < max_num_nodes; i++) {
+        if (!is_initialized(i)) continue;
+        clusters.insert({ufo_node(i).parent, &ufo_node(i)});
+    }
     for (auto entry : clusters) {
         auto leaf = entry.second;
         auto parent = entry.first;

@@ -14,6 +14,7 @@
 #include "graph_verifier.h"
 #include "serial_hybrid_conn.h"
 #include "parallel_hybrid_conn.h"
+#include "cluster_forest_wrapper.h"
 #include "util.h"
 
 const vec_t DEFAULT_SKETCH_ERR = 1;
@@ -159,7 +160,13 @@ TEST(HybridGraphTiersSuite, sparse_only_speed_test) {
     // GraphTierSystem gt(stream.nodes(), seed);
     // SerialConnectivityManager<GraphTierSystem>
     uint32_t num_tiers = log2(stream.nodes()) / (log2(3) - 1);
-    SCCWN<> cf_algo(stream.nodes());
+    ClusterForestWrapper<> cf_algo(stream.nodes());
+
+    const char* interval_env = std::getenv("MEMORY_REPORT_INTERVAL");
+    long report_interval = interval_env ? std::atol(interval_env) : 1000000;
+    const char* file_env = std::getenv("MEMORY_REPORT_FILE");
+    std::string report_file = file_env ? std::string(file_env) : "memory_report.tsv";
+    bool first_report = true;
 
     long total_update_time = 0;
     long total_query_time = 0;
@@ -199,6 +206,11 @@ TEST(HybridGraphTiersSuite, sparse_only_speed_test) {
                 std::cout << "-  Space usage of CF: " << cf_algo.getMemUsage() / (1024 * 1024) << " MB"
                           << std::endl;
             }
+        }
+        unlikely_if(i > 0 && (i % report_interval == 0 || i == edgecount-1)) {
+            auto reports = cf_algo.report_space_usage();
+            write_space_report_tsv(reports, report_file, !first_report, i);
+            first_report = false;
         }
     }
     if (doing_updates) {

@@ -271,8 +271,12 @@ public:
   }
   size_t compute_space_usage() {
     size_t total = sizeof(SkipListNode<SketchClass>);
-    if (this->sketch_agg.is_initialized())
+    if (this->sketch_agg.is_initialized()) {
       total += sketch_agg.space_usage_bytes();
+      // this is double-counted otherwise, sine sketch_agg.space_usage_bytes()
+      // includes the metadata.
+      total -= sizeof(SketchClass);
+    }
     if (this->down != nullptr) {
       SkipListNode<SketchClass>* current = this->down;
       do {

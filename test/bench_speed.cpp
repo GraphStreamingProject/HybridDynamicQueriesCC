@@ -54,6 +54,8 @@
 #elif defined(CUTSET_DS_UFO)
   #define CUTSET_TYPE ufo::CutsetUFOTree<DefaultSketchColumn>
   #define CUTSET_NAME "ufo"
+#elif defined(CUPCAKE_ALGO_CF)
+  #define CUTSET_NAME "cf"
 #else
   #error "Must define one of CUTSET_DS_ETT, CUTSET_DS_LCT, CUTSET_DS_UFO"
 #endif
@@ -91,8 +93,14 @@
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1
+#elif defined(CUPCAKE_ALGO_CF)
+  #include "cluster_forest_wrapper.h"
+  using BenchSystem = ClusterForestWrapper<>;
+  #define TIER_NAME "cluster_forest"
+  #define NEEDS_MPI 0
+  #define IS_HYBRID 0
 #else
-  #error "Must define one of CUPCAKE_ALGO_GRAPH_TIERS, CUPCAKE_ALGO_BATCH_TIERS, CUPCAKE_ALGO_MPI_TIERS"
+  #error "Must define one of CUPCAKE_ALGO_GRAPH_TIERS, CUPCAKE_ALGO_BATCH_TIERS, CUPCAKE_ALGO_MPI_TIERS, CUPCAKE_ALGO_CF"
 #endif
 
 #ifdef USE_RESIZEABLE_SKETCH

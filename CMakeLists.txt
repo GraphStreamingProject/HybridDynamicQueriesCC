@@ -294,5 +294,6 @@ else()
 
   # Add more one-liners here as needed, e.g.:
   # add_bench_targets(batch_ufo_fixed  BATCH_TIERS UFO 0 0)
+  add_bench_targets(cf CF NONE 0 0)
 endif()
 
