@@ -29,7 +29,7 @@ using HybridManagerType = ParallelConnectivityManager<InputNode>;
 
 static long force_sync_interval() {
     const char* interval_env = std::getenv("FORCE_SYNC_INTERVAL");
-    return interval_env ? std::atol(interval_env) : 1000000;
+    return interval_env ? std::atol(interval_env) : 2000000;
 }
 
 // TEST(GraphTierSuite, hybrid_mixed_speed_test) {
@@ -139,7 +139,8 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
 
     BinaryGraphStream stream(stream_file, 100000);
     uint32_t num_nodes = stream.nodes();
-    uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
+    // uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
+    uint32_t num_tiers = world_size-1;
 
     // Parameters
     int update_batch_size = (batch_size_arg==0) ? DEFAULT_BATCH_SIZE : batch_size_arg;
@@ -167,6 +168,7 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
         FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
 
     if (world_rank == 0) {
+        const long sync_interval = force_sync_interval();
         int seed = time(NULL);
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
@@ -183,6 +185,9 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
             // Read an update from the stream and have the input node process it
             GraphUpdate update = stream.get_edge();
             hybrid_manager.update(update);
+            unlikely_if(sync_interval > 0 && i > 0 && (i % sync_interval == 0)) {
+                hybrid_manager.force_sync();
+            }
             unlikely_if(i%1000000 == 0 || i == edgecount-1) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
                 std::cout << "Sketched nodes: " << hybrid_manager.num_sketched_vertices() << " out of " << num_nodes << std::endl;
@@ -195,6 +200,7 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
                 std::cout << "-  Percent direct sketched edges: " << percent_direct << "%" << std::endl;
             }
         }
+        hybrid_manager.force_sync();
         // Communicate to all other nodes that the stream has ended
         hybrid_manager.end();
         auto time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - X).count();
@@ -252,6 +258,7 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
     //     FAIL() << "MPI world size too small for graph with " << num_nodes << " vertices. Correct world size is: " << num_tiers+1;
 
     if (world_rank == 0) {
+        const long sync_interval = force_sync_interval();
         int seed = time(NULL);
         srand(seed);
         std::cout << "InputNode seed: " << seed << std::endl;
@@ -267,7 +274,12 @@ TEST(GraphTiersSuite, hybrid_query_speed_test) {
             for (int i = 0; i < edgecount/10; i++) {
                 GraphUpdate update = stream.get_edge();
                 hybrid_driver.update(update);
+                unlikely_if(sync_interval > 0 && i > 0 && (i % sync_interval == 0)) {
+                    hybrid_driver.force_sync();
+                }
             }
+
+            hybrid_driver.force_sync();
 
             long querycount = 100000000;
 

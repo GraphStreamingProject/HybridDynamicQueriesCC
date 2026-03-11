@@ -49,7 +49,7 @@ void InputNode::process_updates() {
     // If less than 1/10 of the last updates are isolated use sliding window
     bool prev_strat = using_sliding_window;
     // using_sliding_window = false;//(isolation_count<history_size/10) ? true : false;
-    using_sliding_window = true;
+    // using_sliding_window = true;
     if (using_sliding_window != prev_strat)
         std::cout << "SWITCHED TO " << (using_sliding_window ? "SLIDING WINDOW" : "NORMAL STRAT") << std::endl;
     // Pre-compute which tiers should be cut for each delete.

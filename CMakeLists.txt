@@ -13,6 +13,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 #set(INTERPROCEDURAL_OPTIMIZATION TRUE)
 
+option(USE_RESIZEABLE_SKETCH "Use ResizeableSketchColumn for test targets" OFF)
+
 # Make the default build type Release. If user or another
 # project sets a different value than use that
 if(NOT CMAKE_BUILD_TYPE)
@@ -183,6 +185,13 @@ target_link_libraries(hybrid_shmem_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC
 
 target_compile_options(hybrid_shmem_dynamicCC_tests PUBLIC -fopenmp)
 target_link_options(hybrid_shmem_dynamicCC_tests PUBLIC -fopenmp)
+
+if(USE_RESIZEABLE_SKETCH)
+  target_compile_definitions(dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
+  target_compile_definitions(mpi_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
+  target_compile_definitions(hybrid_mpi_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
+  target_compile_definitions(hybrid_shmem_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
+endif()
 
 #######
 # TODO: Is MPI INCLUDE PATH necessary?

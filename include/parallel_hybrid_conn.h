@@ -39,10 +39,36 @@ private:
                         std::this_thread::yield();
                         continue;
                     }
-                    handle_command(cmd, log_buffer);
+
+                    // Batch commands to amortize sketch processing and log draining.
+                    uint64_t last_seq = cmd.seq_num;
+                    size_t batch_count = 0;
+                    apply_command(cmd);
+                    ++batch_count;
+
+                    while (batch_count < kSketchCommandBatchSize && command_queue.try_pop(cmd)) {
+                        apply_command(cmd);
+                        last_seq = cmd.seq_num;
+                        ++batch_count;
+                    }
+
+                    process_and_publish(last_seq, log_buffer);
                 }
+
+                // Drain any residual work after stop.
                 while (command_queue.try_pop(cmd)) {
-                    handle_command(cmd, log_buffer);
+                    uint64_t last_seq = cmd.seq_num;
+                    size_t batch_count = 0;
+                    apply_command(cmd);
+                    ++batch_count;
+
+                    while (batch_count < kSketchCommandBatchSize && command_queue.try_pop(cmd)) {
+                        apply_command(cmd);
+                        last_seq = cmd.seq_num;
+                        ++batch_count;
+                    }
+
+                    process_and_publish(last_seq, log_buffer);
                 }
             });
         }
@@ -85,7 +111,7 @@ private:
         }
 
     private:
-        void handle_command(const SketchCommand& cmd, std::vector<GraphUpdate>& log_buffer) {
+        void apply_command(const SketchCommand& cmd) {
             switch (cmd.type) {
                 case SketchCommand::Type::EDGE_UPDATE:
                     sketching_algo.update(cmd.update);
@@ -100,15 +126,20 @@ private:
                     // Sketch-side reclaim is currently equivalent to deactivation.
                     break;
             }
+        }
 
+        void process_and_publish(uint64_t last_seq, std::vector<GraphUpdate>& log_buffer) {
             sketching_algo.process_all_updates();
             log_buffer.clear();
             sketching_algo.drain_transaction_log(log_buffer);
             for (const auto& update : log_buffer) {
                 committed_updates.push(update);
             }
-            processed_seq_num.store(cmd.seq_num);
+            processed_seq_num.store(last_seq);
         }
+
+        // static constexpr size_t kSketchCommandBatchSize = 65536; 
+        static constexpr size_t kSketchCommandBatchSize = 1024;
 
         SketchAlgoClass sketching_algo;
         tbb::concurrent_queue<SketchCommand> command_queue;
@@ -210,15 +241,15 @@ private:
         void handle_command(const RecoveryCommand& cmd) {
             switch (cmd.type) {
                 case RecoveryCommand::Type::EDGE_UPDATE: {
-                    Edge edge = inv_concat_pairing_fn(cmd.update);
-                    auto it1 = recovery_sketches.find(edge.src);
-                    if (it1 != recovery_sketches.end()) {
-                        it1->second->update(cmd.update);
-                    }
-                    auto it2 = recovery_sketches.find(edge.dst);
-                    if (it2 != recovery_sketches.end()) {
-                        it2->second->update(cmd.update);
-                    }
+                    // Edge edge = inv_concat_pairing_fn(cmd.update);
+                    // auto it1 = recovery_sketches.find(edge.src);
+                    // if (it1 != recovery_sketches.end()) {
+                    //     it1->second->update(cmd.update);
+                    // }
+                    // auto it2 = recovery_sketches.find(edge.dst);
+                    // if (it2 != recovery_sketches.end()) {
+                    //     it2->second->update(cmd.update);
+                    // }
                     break;
                 }
                 case RecoveryCommand::Type::ACTIVATE_VERTEX: {
