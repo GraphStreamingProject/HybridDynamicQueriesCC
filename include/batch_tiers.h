@@ -134,6 +134,13 @@ class BatchTiers {
             transaction_log.clear();
         }
 
+        void drain_transaction_log(std::vector<GraphUpdate>& out) {
+            if (!transaction_log.empty()) {
+                out.insert(out.end(), transaction_log.begin(), transaction_log.end());
+                transaction_log.clear();
+            }
+        }
+
         const std::vector<GraphUpdate>& get_transaction_log() const {
             return transaction_log;
         }

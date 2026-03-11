@@ -5,6 +5,7 @@
 #include <random>
 #include <iostream>
 #include <fstream>
+#include <cstdlib>
 // #include <omp.h>
 #include "mpi_nodes.h"
 #include "binary_graph_stream.h"
@@ -25,6 +26,11 @@ using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
 
 using HybridManagerType = ParallelConnectivityManager<InputNode>;
 // using HybridManagerType = SerialConnectivityManager<InputNode>;
+
+static long force_sync_interval() {
+    const char* interval_env = std::getenv("FORCE_SYNC_INTERVAL");
+    return interval_env ? std::atol(interval_env) : 1000000;
+}
 
 // TEST(GraphTierSuite, hybrid_mixed_speed_test) {
 //     int world_rank_buf;

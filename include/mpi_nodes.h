@@ -120,6 +120,12 @@ public:
   void flush_transaction_log() {
     transaction_log.clear();
   };
+  void drain_transaction_log(std::vector<GraphUpdate>& out) {
+    if (!transaction_log.empty()) {
+      out.insert(out.end(), transaction_log.begin(), transaction_log.end());
+      transaction_log.clear();
+    }
+  }
   size_t space_usage_bytes() const {
     return 0; // TODO - implement
   }

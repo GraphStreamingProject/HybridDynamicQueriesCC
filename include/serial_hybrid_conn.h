@@ -486,6 +486,11 @@ class SerialConnectivityManager {
             flush_transaction_log();
             return cf_algo.is_connected(a, b);
         }
+
+        void force_sync() {
+            sketching_algo.process_all_updates();
+            flush_transaction_log();
+        }
         
         std::vector<std::set<node_id_t>> cc_query() {
             sketching_algo.process_all_updates();
