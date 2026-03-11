@@ -67,8 +67,8 @@ void TierNode<TreeStrategy>::main() {
             // Perform the sketch updating or root finding
             GraphUpdate update = update_buffer[i+1].update;
             // TODO - do this in a different way?
-            initialize_node(update.edge.src);
-            initialize_node(update.edge.dst);
+            if (!ett.is_initialized(update.edge.src)) initialize_node(update.edge.src);
+            if (!ett.is_initialized(update.edge.dst)) initialize_node(update.edge.dst);
             edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
             split_revert_buffer[i] = false;
             const uint32_t cut_start_tier = update_buffer[i+1].cut_start_tier;

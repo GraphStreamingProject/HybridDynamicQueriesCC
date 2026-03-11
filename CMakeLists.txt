@@ -284,7 +284,14 @@ if(BENCH_ALL)
     endforeach()
   endforeach()
 else()
-  # Default: MPI × {UFO, LCT, ETT} × resizeable, pure cupcake + hybrid
+  # Default: MPI × {UFO, LCT, ETT} × {fixed, resizeable}, pure cupcake + hybrid
+  add_bench_targets(mpi_ufo_fixed              MPI_TIERS UFO 0 0)
+  add_bench_targets(mpi_lct_fixed              MPI_TIERS LCT 0 0)
+  add_bench_targets(mpi_ett_fixed              MPI_TIERS ETT 0 0)
+  add_bench_targets(mpi_ufo_fixed_hybrid       MPI_TIERS UFO 1 0)
+  add_bench_targets(mpi_lct_fixed_hybrid       MPI_TIERS LCT 1 0)
+  add_bench_targets(mpi_ett_fixed_hybrid       MPI_TIERS ETT 1 0)
+
   add_bench_targets(mpi_ufo_resizeable          MPI_TIERS UFO 0 1)
   add_bench_targets(mpi_lct_resizeable          MPI_TIERS LCT 0 1)
   add_bench_targets(mpi_ett_resizeable          MPI_TIERS ETT 0 1)

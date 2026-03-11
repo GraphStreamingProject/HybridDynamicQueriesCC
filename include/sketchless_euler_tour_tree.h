@@ -97,6 +97,7 @@ public:
     if constexpr (!std::is_same_v<Container, std::vector<SketchlessEulerTourNode>>) {
         assert(ett_nodes.find(u) != ett_nodes.end());
         delete ett_nodes[u];
+        ett_nodes.erase(u);
     }
   };
   

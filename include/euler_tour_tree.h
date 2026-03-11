@@ -155,7 +155,7 @@ public:
     if constexpr (!std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
         assert(ett_nodes.find(u) != ett_nodes.end());
         delete ett_nodes[u];
-        // TODO - actually delete form ett
+        ett_nodes.erase(u);
     }
   };
   
@@ -214,12 +214,16 @@ public:
   uint32_t get_size(node_id_t u);
   uint32_t num_components() {
     std::set<void*> roots;
-    for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
-      if (!is_initialized(i)) {
-        continue;
+    if constexpr (std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
+      for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
+        auto root = ett_node(i).get_root();
+        roots.insert(root);
       }
-      auto root = ett_node(i).get_root();
-      roots.insert(root);
+    } else {
+      for (const auto& [_, node] : ett_nodes) {
+        auto root = node->get_root();
+        roots.insert(root);
+      }
     }
     return roots.size();
   }
