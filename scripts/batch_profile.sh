@@ -103,10 +103,10 @@ for stream_file in "$@"; do
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 500 --auto-build
 
-        # 4. Pure Sketch (Default hybrid)
+        # 4. Pure Sketch
         run_config --algo mpi --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --auto-build
+            --auto-build
 
         # 5. Pure CF
         run_config --algo cf \
