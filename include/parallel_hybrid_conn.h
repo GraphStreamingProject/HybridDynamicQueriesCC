@@ -13,6 +13,7 @@ public:
 
     void set_threshold(size_t threshold) {
         DENSE_THRESHOLD = threshold;
+        recovery_subsystem.set_threshold(threshold);
     }
 
     node_id_t sketched_node_count() const {
@@ -151,8 +152,8 @@ private:
 
     class RecoverySubsystem {
     public:
-        RecoverySubsystem(node_id_t num_nodes, size_t seed)
-            : num_nodes(num_nodes), seed(seed) {}
+        RecoverySubsystem(node_id_t num_nodes, size_t dense_threshold, size_t seed)
+            : num_nodes(num_nodes), seed(seed), dense_threshold(dense_threshold) {}
 
         ~RecoverySubsystem() {
             stop();
@@ -205,6 +206,10 @@ private:
             return approx_space_usage_bytes.load();
         }
 
+        void set_threshold(size_t threshold) {
+            dense_threshold = threshold;
+        }
+
     private:
         void reclaim_retired(uint64_t watermark) {
             while (!retired_vertices.empty() && retired_vertices.front().first <= watermark) {
@@ -217,7 +222,6 @@ private:
                 }
 
                 approx_space_usage_bytes.fetch_sub(it->second->space_usage_bytes());
-                delete it->second->cleanup_sketch;
                 delete it->second;
                 recovery_sketches.erase(it);
                 active_vertices.fetch_sub(1);
@@ -241,15 +245,15 @@ private:
         void handle_command(const RecoveryCommand& cmd) {
             switch (cmd.type) {
                 case RecoveryCommand::Type::EDGE_UPDATE: {
-                    // Edge edge = inv_concat_pairing_fn(cmd.update);
-                    // auto it1 = recovery_sketches.find(edge.src);
-                    // if (it1 != recovery_sketches.end()) {
-                    //     it1->second->update(cmd.update);
-                    // }
-                    // auto it2 = recovery_sketches.find(edge.dst);
-                    // if (it2 != recovery_sketches.end()) {
-                    //     it2->second->update(cmd.update);
-                    // }
+                    Edge edge = inv_concat_pairing_fn(cmd.update);
+                    auto it1 = recovery_sketches.find(edge.src);
+                    if (it1 != recovery_sketches.end()) {
+                        it1->second->update(edge.dst);
+                    }
+                    auto it2 = recovery_sketches.find(edge.dst);
+                    if (it2 != recovery_sketches.end()) {
+                        it2->second->update(edge.src);
+                    }
                     break;
                 }
                 case RecoveryCommand::Type::ACTIVATE_VERTEX: {
@@ -258,7 +262,7 @@ private:
                         break;
                     }
                     double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
-                    auto* sketch = new SparseRecovery(num_nodes, 128, cleanup_adjustment_factor, seed);
+                    auto* sketch = new SparseRecovery((size_t)num_nodes, (size_t)dense_threshold / 8, cleanup_adjustment_factor, (uint64_t)seed, false);
                     recovery_sketches[cmd.vertex] = sketch;
                     approx_space_usage_bytes.fetch_add(sketch->space_usage_bytes());
                     active_vertices.fetch_add(1);
@@ -277,7 +281,6 @@ private:
 
         void cleanup_all() {
             for (auto& pair : recovery_sketches) {
-                delete pair.second->cleanup_sketch;
                 delete pair.second;
             }
             recovery_sketches.clear();
@@ -288,6 +291,7 @@ private:
 
         node_id_t num_nodes;
         size_t seed;
+        size_t dense_threshold;
         tbb::concurrent_queue<RecoveryCommand> command_queue;
         std::thread worker;
         std::atomic<bool> running{false};
@@ -450,7 +454,7 @@ public:
     ParallelConnectivityManager(node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed)
         : cf_algo(num_nodes),
           sketch_subsystem(num_nodes, num_tiers, batch_size, seed),
-          recovery_subsystem(num_nodes, seed),
+          recovery_subsystem(num_nodes, DENSE_THRESHOLD, seed),
           seed(seed),
           num_nodes(num_nodes) {
         num_pending_dense_edges.resize(num_nodes, 0);
@@ -493,6 +497,8 @@ public:
     }
 
     bool check_and_perform_recovery(node_id_t vertex) {
+        // TODO - actually perform the successful recovery (reinserting edges etc) 
+        // similar to SerialConnectivityManager if needed.
         return false;
     }
 
@@ -527,6 +533,9 @@ public:
 
             if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                 if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
+                    // TODO - this isn't ever gonna be delete-aware.
+                    // the best way to track this is probably have a 
+                    // total skethc insertions variable specifically.
                     total_direct_sketch_edges++;
                     enqueue_insert_to_sketch(update.edge.src, update.edge.dst);
                     return;
@@ -584,6 +593,14 @@ public:
                 pending_connectivity_work = true;
                 check_and_perform_recovery(update.edge.src);
                 check_and_perform_recovery(update.edge.dst);
+            }
+
+            // Cleanup sketches if they are no longer dense
+            if (is_vertex_sketched(update.edge.src) && num_edges[update.edge.src] < DENSE_THRESHOLD / 2) {
+                uninitialize_vertex_sketch(update.edge.src);
+            }
+            if (is_vertex_sketched(update.edge.dst) && num_edges[update.edge.dst] < DENSE_THRESHOLD / 2) {
+                uninitialize_vertex_sketch(update.edge.dst);
             }
         }
     }
@@ -663,6 +680,11 @@ public:
         report.driver_space_bytes = get_space_usage_driver();
         report.recovery_sketch_space_bytes = space_usage_recovery_sketch();
         report.sketch_forest_report = sketch_subsystem.report_space_usage();
+
+        report.total_num_edges = total_edges();
+        report.num_sketched_vertices = num_sketched_vertices();
+        report.num_sketched_edges = num_sketched_edges();
+        report.num_direct_sketch_edges = num_direct_sketch_edges();
         return report;
     }
 

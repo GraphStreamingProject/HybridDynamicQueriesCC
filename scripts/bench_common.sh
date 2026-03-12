@@ -77,6 +77,11 @@ bench_parse_common_args() {
         CONFIG="${CONFIG}_hybrid"
       fi
     fi
+
+    CONFIG_NAME="${CONFIG}"
+    if $IS_HYBRID && [[ -n "$HYBRID_THRESHOLD" ]]; then
+      CONFIG_NAME="${CONFIG}_t${HYBRID_THRESHOLD}"
+    fi
   fi
 
   if [[ -z "$STREAM" ]]; then

@@ -132,7 +132,7 @@ class SerialConnectivityManager {
             // i think 5 sample should be enough?
             double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
             // double cleanup_adjustment_factor = 1.0;
-            recovery_sketches[vertex] = new SparseRecovery(num_nodes, 128, cleanup_adjustment_factor, seed);
+            recovery_sketches[vertex] = new SparseRecovery((size_t)num_nodes, (size_t)DENSE_THRESHOLD / 4, cleanup_adjustment_factor, (uint64_t)seed, false);
             
             // update your neighbors' dense edge counts
             for (auto &level_edges: cf_algo.leaves[vertex]->vertex->E) {
@@ -164,8 +164,6 @@ class SerialConnectivityManager {
                 return;
             }
             _is_vertex_sketched.erase(vertex);
-            // TODO - for now, the cleanup sketch isnt deleted by destructing
-            delete recovery_sketches[vertex]->cleanup_sketch;
             delete recovery_sketches[vertex];
             recovery_sketches.erase(vertex);
             // std::cout << "Uninitialized sketch for vertex " << vertex << std::endl;
@@ -275,12 +273,12 @@ class SerialConnectivityManager {
             likely_if (num_edges[vertex] > MOVE_TO_SKETCH / 4) {
                 return false;
             }
-            // likely_if (!recovery_sketches[vertex]->worth_recovery_attempt()) {
-            //     return false;
             // }
-            auto recovery_attempt = recovery_sketches[vertex]->recover();
-            unlikely_if (recovery_attempt.result == FAILURE) {
-                // TODO - handle failure case
+            auto recovery_attempt = recovery_sketches[vertex]->recover(true);
+            if (recovery_attempt.result == FAILURE || recovery_attempt.result == PARTIAL_RECOVERY) {
+                if (recovery_attempt.result == PARTIAL_RECOVERY) {
+                    // TODO - use sketching_algo (GraphTiers/InputNode) to finish off partial recovery
+                }
                 return false;
             }
             // std::cout << "RECOVERY SUCCEEDED YA HURD" << std::endl;
@@ -541,6 +539,11 @@ class SerialConnectivityManager {
             report.driver_space_bytes = get_space_usage_driver();
             report.recovery_sketch_space_bytes = space_usage_recovery_sketch();
             report.sketch_forest_report = sketching_algo.report_space_usage();
+
+            report.total_num_edges = total_edges();
+            report.num_sketched_vertices = num_sketched_vertices();
+            report.num_sketched_edges = num_sketched_edges();
+            report.num_direct_sketch_edges = num_direct_sketch_edges();
             return report;
         }
         size_t get_space_usage_driver() {

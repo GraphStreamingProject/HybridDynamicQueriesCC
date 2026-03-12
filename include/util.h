@@ -52,6 +52,12 @@ struct HybridSpaceReport {
     size_t driver_space_bytes = 0;
     size_t recovery_sketch_space_bytes = 0;
     SpaceReport sketch_forest_report;
+
+    // Scaling metrics
+    size_t num_sketched_vertices = 0;
+    size_t total_num_edges = 0;
+    size_t num_sketched_edges = 0;
+    size_t num_direct_sketch_edges = 0;
 };
 
 inline int compute_first_maximal_tier(const HybridSpaceReport& report) {
@@ -83,7 +89,7 @@ inline void write_space_report_tsv(const HybridSpaceReport& hybrid_report, const
     std::string summary_path = file_path.substr(0, file_path.rfind('.')) + "_hybrid_summary.tsv";
     std::ofstream summary(summary_path, append ? std::ios_base::app : std::ios_base::out);
     if (!append) {
-        summary << "update_idx\ttotal_cf_bytes\ttotal_driver_bytes\ttotal_recovery_bytes\ttotal_sketch_bytes\tmaximal_tier" << std::endl;
+        summary << "update_idx\ttotal_cf_bytes\ttotal_driver_bytes\ttotal_recovery_bytes\ttotal_sketch_bytes\tmaximal_tier\ttotal_edges\tnum_sketched_vertices\tnum_sketched_edges\tnum_direct_sketch_edges" << std::endl;
     }
     size_t total_sketch_bytes = 0;
     for (const auto& r : hybrid_report.sketch_forest_report.tier_reports) {
@@ -94,7 +100,11 @@ inline void write_space_report_tsv(const HybridSpaceReport& hybrid_report, const
             << hybrid_report.driver_space_bytes << "\t"
             << hybrid_report.recovery_sketch_space_bytes << "\t"
             << total_sketch_bytes << "\t"
-            << compute_first_maximal_tier(hybrid_report.sketch_forest_report.tier_reports) << std::endl;
+            << compute_first_maximal_tier(hybrid_report.sketch_forest_report.tier_reports) << "\t"
+            << hybrid_report.total_num_edges << "\t"
+            << hybrid_report.num_sketched_vertices << "\t"
+            << hybrid_report.num_sketched_edges << "\t"
+            << hybrid_report.num_direct_sketch_edges << std::endl;
 }
 
 extern std::string stream_file;
