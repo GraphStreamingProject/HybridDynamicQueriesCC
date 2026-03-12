@@ -162,9 +162,15 @@ public:
     }
     uint32_t num_components() {
         std::unordered_set<Cluster*> roots;
-        for (node_id_t i = 0; i < max_num_nodes; ++i) {
-            if (!is_initialized(i)) continue;
-            roots.insert(ufo_node(i).get_root());
+        if constexpr (std::is_same_v<Container, std::vector<Cluster>>) {
+            for (node_id_t i = 0; i < max_num_nodes; ++i) {
+                if (!is_initialized(i)) continue;
+                roots.insert(ufo_node(i).get_root());
+            }
+        } else {
+            for (const auto& [_, leaf] : leaves) {
+                roots.insert(leaf->get_root());
+            }
         }
         return roots.size();
     }

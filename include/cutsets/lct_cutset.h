@@ -284,13 +284,8 @@ size_t CutsetLCT<SketchClass, Container>::space() {
     } else {
         // Bucket metadata/controls in flat hash map.
         mem += sizeof(std::pair<node_id_t, Node<SketchClass>*>*) * verts.bucket_count();
-    }
-    for (node_id_t i = 0; i < max_num_nodes; ++i) {
-        if (!is_initialized(i)) continue;
-        if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
-            mem += lct_node(i).space();
-        } else {
-            mem += lct_node(i).space() - sizeof(Node<SketchClass>); 
+        for (const auto& [_, node] : verts) {
+            mem += node->space();
         }
     }
     return mem;

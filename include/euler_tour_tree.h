@@ -245,14 +245,15 @@ public:
         total += sizeof(std::pair<node_id_t, EulerTourNode<SketchClass>>*) * num_buckets;
     }
     std::unordered_set<SkipListNode<SketchClass>*> roots;
-    for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
-      if constexpr (!std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
-        if (ett_nodes.find(i) == ett_nodes.end()) {
-          continue;
-        }
+    if constexpr (std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
+      for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
+        SkipListNode<SketchClass>* root = ett_node(i).get_root();
+        roots.insert(root);
       }
-      SkipListNode<SketchClass>* root = ett_node(i).get_root();
-      roots.insert(root);
+    } else {
+      for (const auto& [_, node] : ett_nodes) {
+        roots.insert(node->get_root());
+      }
     }
     for (SkipListNode<SketchClass>* root : roots) {
       total += root->compute_space_usage();
