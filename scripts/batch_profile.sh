@@ -16,9 +16,8 @@ NUM_RUNS="${NUM_RUNS:-2}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
 SLURM_MODE=false
-SLURM_PARTITION=""
-SLURM_TIME="04:00:00"
-SLURM_ACCOUNT=""
+SLURM_PARTITION="long-40core"
+SLURM_TIME="24:00:00"
 SBATCH_ARGS=""
 SLURM_LOG_DIR=""
 SLURM_TASK_FILE=""
@@ -34,9 +33,8 @@ Options:
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
     --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
   --slurm               Submit each config as a separate SLURM job
-  --slurm-partition P   SLURM partition name
-  --slurm-time T        SLURM time limit (default: 04:00:00)
-  --slurm-account A     SLURM account/project
+  --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
+  --slurm-time T        SLURM time limit (default: 24:00:00; max: 48:00:00)
   --sbatch-args "..."   Extra arguments passed to sbatch
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
   -h, --help            Show this help text
@@ -72,10 +70,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --slurm-time)
             SLURM_TIME="$2"
-            shift 2
-            ;;
-        --slurm-account)
-            SLURM_ACCOUNT="$2"
             shift 2
             ;;
         --sbatch-args)
@@ -278,7 +272,6 @@ if $SLURM_MODE; then
         echo "#SBATCH --output=${SLURM_LOG_DIR}/profile_%A_%a.out"
         echo "#SBATCH --error=${SLURM_LOG_DIR}/profile_%A_%a.err"
         [[ -n "$SLURM_PARTITION" ]] && echo "#SBATCH --partition=${SLURM_PARTITION}"
-        [[ -n "$SLURM_ACCOUNT" ]] && echo "#SBATCH --account=${SLURM_ACCOUNT}"
         echo ""
         echo "module load openmpi"
         echo ""

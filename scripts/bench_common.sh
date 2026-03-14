@@ -131,7 +131,7 @@ bench_run() {
       exit 1
     fi
     if [[ -z "$MPI_FLAGS" ]]; then
-      MPI_FLAGS="--oversubscribe -x LD_PRELOAD=/usr/lib/libmimalloc.so"
+      MPI_FLAGS="--oversubscribe"
     fi
     echo "Running: mpirun -np ${NP} ${MPI_FLAGS} ${BINARY} ${BENCH_ARGS[*]}"
     mpirun -np "${NP}" ${MPI_FLAGS} "${BINARY}" "${BENCH_ARGS[@]}"
