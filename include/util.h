@@ -19,16 +19,25 @@ struct SpaceReport {
 };
 
 /**
- * Compute the "first maximal tier": the first tier i such that tier i+1
- * has the same number of components. Returns -1 if no such tier exists.
+ * Compute the maximal tier; the first such that every tier above it has the same number of components as it does. 
+ * If no such tier exists, returns -1.
  */
 inline int compute_first_maximal_tier(const std::vector<SpaceReportMessage>& reports) {
-    for (size_t t = 0; t + 1 < reports.size(); t++) {
-        if (reports[t].num_components == reports[t + 1].num_components) {
-            return static_cast<int>(reports[t].tier_num);
-        }
+    if (reports.size() < 2) {
+        return -1;
     }
-    return -1;
+
+    const size_t top_components = reports.back().num_components;
+    int first_smaller = static_cast<int>(reports.size()) - 2;
+    while (first_smaller >= 0 && reports[first_smaller].num_components == top_components) {
+        first_smaller--;
+    }
+
+    if (first_smaller == static_cast<int>(reports.size()) - 2) {
+        return -1;
+    }
+
+    return reports[first_smaller + 1].tier_num;
 }
 
 inline int compute_first_maximal_tier(const SpaceReport& report) {
