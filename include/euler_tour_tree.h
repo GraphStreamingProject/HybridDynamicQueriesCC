@@ -261,6 +261,30 @@ public:
     return total;
   }
 
+  // size_t space_usage_bytes() {
+  //   size_t total = 0;
+  //   if constexpr (std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
+  //       total += sizeof(EulerTourNode<SketchClass>) * ett_nodes.capacity();
+  //   } else {
+  //       size_t num_buckets = ett_nodes.bucket_count();
+  //       total += sizeof(std::pair<node_id_t, EulerTourNode<SketchClass>>*) * num_buckets;
+  //   }
+  //   std::unordered_set<SkipListNode<SketchClass>*> roots;
+  //   for (node_id_t i = 0; i < ett_nodes.size(); ++i) {
+  //     if constexpr (!std::is_same_v<Container, std::vector<EulerTourNode<SketchClass>>>) {
+  //       if (ett_nodes.find(i) == ett_nodes.end()) {
+  //         continue;
+  //       }
+  //     }
+  //     SkipListNode<SketchClass>* root = ett_node(i).get_root();
+  //     roots.insert(root);
+  //   }
+  //   for (SkipListNode<SketchClass>* root : roots) {
+  //     total += root->compute_space_usage();
+  //   }
+  //   return total;
+  // }
+
   std::vector<node_id_t> get_component_vertices(node_id_t u) {
       return ett_node(u).get_component_vertices();
   }

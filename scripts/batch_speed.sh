@@ -1,12 +1,11 @@
 #!/bin/bash
-# batch_profile.sh — Batch run profile benchmarks for multiple streams and thresholds.
+# batch_speed.sh — Batch run speed benchmarks for multiple streams and thresholds.
 #
 # Usage:
-#   ./scripts/batch_profile.sh [--np N] [--num-runs N] [--output-base-dir DIR] [--mpi-flags "..."] stream_file1 stream_file2 ...
+#   ./scripts/batch_speed.sh [--np N] [--num-runs N] [--output-base-dir DIR] [--mpi-flags "..."] stream_file1 stream_file2 ...
 #
 # Environment defaults (overridden by flags):
 #   NP, NUM_RUNS, OUTPUT_BASE_DIR, MPI_FLAGS
-#
 
 set -euo pipefail
 
@@ -24,7 +23,7 @@ Options:
   --np N                Number of MPI ranks (default: NP env var or 23)
   --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 2)
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
-    --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
+  --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
   -h, --help            Show this help text
 EOF
 }
@@ -86,6 +85,18 @@ if ! [[ "$NP" =~ ^[0-9]+$ ]] || [[ "$NP" -lt 1 ]]; then
     exit 1
 fi
 
+# Function to find the next available YYYY-MM-DD_NN suffix for a specific config
+get_next_run_suffix() {
+    local config_dir="$1"
+    local date_prefix
+    date_prefix=$(date +%Y-%m-%d)
+    local n=1
+    while [[ -d "${config_dir}/${date_prefix}_$(printf "%02d" "$n")" ]]; do
+        ((n++))
+    done
+    echo "${date_prefix}_$(printf "%02d" "$n")"
+}
+
 for stream_file in "${STREAM_FILES[@]}"; do
     if [[ ! -f "$stream_file" ]]; then
         echo "Warning: Stream file not found: $stream_file. Skipping."
@@ -100,28 +111,17 @@ for stream_file in "${STREAM_FILES[@]}"; do
     echo "File: ${stream_file}"
     echo "=========================================================="
 
-    # Function to find the next available YYYY-MM-DD_NN suffix for a specific config
-    get_next_run_suffix() {
-        local config_dir="$1"
-        local date_prefix=$(date +%Y-%m-%d)
-        local n=1
-        while [[ -d "${config_dir}/${date_prefix}_$(printf "%02d" $n)" ]]; do
-            ((n++))
-        done
-        echo "${date_prefix}_$(printf "%02d" $n)"
-    }
-
     # Helper to run a config and manage suffixes
     run_config() {
         local config_args=("$@")
-        
-        # Parse the args to reconstruct the expected CONFIG_NAME for folder naming
+
+        # Parse args to reconstruct config folder naming.
         local algo="mpi"
         local cutset="lct"
         local sketch="resizeable"
         local hybrid=false
         local threshold=""
-        
+
         local i=0
         while [[ $i -lt ${#config_args[@]} ]]; do
             case "${config_args[$i]}" in
@@ -133,7 +133,7 @@ for stream_file in "${STREAM_FILES[@]}"; do
                 *) i=$((i+1));;
             esac
         done
-        
+
         local cfg_name="${algo}_${cutset}_${sketch}"
         if $hybrid; then
             cfg_name="${cfg_name}_hybrid"
@@ -141,24 +141,25 @@ for stream_file in "${STREAM_FILES[@]}"; do
                 cfg_name="${cfg_name}_t${threshold}"
             fi
         fi
-        
-        # Correct handling for 'cf' config
+
         if [[ "$algo" == "cf" ]]; then
             cfg_name="cf"
         fi
-        
+
         local full_config_path="${output_dir}/${cfg_name}"
-        local run_suffix=$(get_next_run_suffix "${full_config_path}")
+        local run_suffix
+        run_suffix=$(get_next_run_suffix "${full_config_path}")
+        local output_file="${full_config_path}/${run_suffix}/${stream_name}_speed.tsv"
         local mpi_args=()
         if [[ -n "$MPI_FLAGS" ]]; then
             mpi_args+=(--mpi-flags "$MPI_FLAGS")
         fi
-        
+
         echo "Config: ${cfg_name} | Suffix: ${run_suffix}"
-        "${SCRIPT_DIR}/run_profile.sh" "${config_args[@]}" "${mpi_args[@]}" --run-suffix "${run_suffix}"
+        "${SCRIPT_DIR}/run_speed.sh" "${config_args[@]}" "${mpi_args[@]}" --output "$output_file"
     }
 
-    for run in $(seq 1 $NUM_RUNS); do
+    for run in $(seq 1 "$NUM_RUNS"); do
         echo "--- Batch Run Item ${run} / ${NUM_RUNS} ---"
 
         # 1. Hybrid with Threshold 1200
@@ -187,4 +188,4 @@ for stream_file in "${STREAM_FILES[@]}"; do
     done
 done
 
-echo "Batch profiling complete. Results are in ${OUTPUT_BASE_DIR}"
+echo "Batch speed testing complete. Results are in ${OUTPUT_BASE_DIR}"
