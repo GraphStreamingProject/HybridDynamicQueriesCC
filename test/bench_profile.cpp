@@ -182,7 +182,7 @@ int main(int argc, char** argv) {
 
     // Create output directory
     std::string stream_basename = basename_of(cfg.stream_path);
-    std::string out_dir = cfg.output_dir + "/" + config_name;
+    std::string out_dir = cfg.output_dir;
 
 #if NEEDS_MPI
     int do_mkdir = 0;
