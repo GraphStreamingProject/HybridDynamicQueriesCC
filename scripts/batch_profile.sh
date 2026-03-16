@@ -20,6 +20,7 @@ SLURM_MODE=false
 SLURM_PARTITION="long-40core"
 SLURM_TIME="24:00:00"
 CPUS_PER_TASK="1"
+SLURM_EXCLUSIVE=true
 SBATCH_ARGS=""
 SLURM_LOG_DIR=""
 SLURM_TASK_FILE=""
@@ -36,10 +37,11 @@ Options:
   --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 2)
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
     --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
-  --slurm               Submit each config as a separate SLURM job
+    --slurm               Submit each config as a separate SLURM job
+    --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
   --slurm-time T        SLURM time limit (default: 24:00:00; max: 48:00:00)
-  --sbatch-args "..."   Extra arguments passed to sbatch
+    --sbatch-args "..."   Extra arguments passed to sbatch (jobs are exclusive by default)
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
   -h, --help            Show this help text
 EOF
@@ -74,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --slurm)
             SLURM_MODE=true
+            shift
+            ;;
+        --no-exclusive)
+            SLURM_EXCLUSIVE=false
             shift
             ;;
         --slurm-partition)
@@ -301,6 +307,7 @@ if $SLURM_MODE; then
         echo "#SBATCH --job-name=batch_profile"
         echo "#SBATCH --array=0-${ARRAY_MAX}"
         echo "#SBATCH --nodes=1"
+        $SLURM_EXCLUSIVE && echo "#SBATCH --exclusive"
         echo "#SBATCH --ntasks-per-node=${ALLOC_TASKS_PER_NODE}"
         echo "#SBATCH --cpus-per-task=${CPUS_PER_TASK}"
         echo "#SBATCH --time=${SLURM_TIME}"
