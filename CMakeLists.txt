@@ -53,32 +53,45 @@ endif()
 
 
 
+set(TBB_TEST OFF CACHE BOOL "" FORCE)
+set(TBB_STRICT OFF CACHE BOOL "Disable strict warnings as errors for TBB" FORCE)
+FetchContent_Declare(
+  onetbb
+  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
+  GIT_TAG        v2022.3.0
+)
+FetchContent_MakeAvailable(onetbb)
+
+# Create dummy TBBConfig.cmake so Parlay's find_package(TBB) succeeds.
+if(NOT TARGET TBB::tbb)
+  add_library(TBB::tbb ALIAS tbb)
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/TBBConfig.cmake" "
+if(NOT TARGET TBB::tbb)
+  add_library(TBB::tbb ALIAS tbb)
+endif()
+")
+set(TBB_DIR "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "Path to dummy TBBConfig" FORCE)
+
 # Install GraphZeppelin Project
 FetchContent_Declare(
   GraphZeppelinVerifyCC
-
   GIT_REPOSITORY      https://github.com/GraphStreamingProject/GraphZeppelin
   #GIT_TAG            047b89f5577043b3ec69b91c092c1f1ec0b04816
   GIT_TAG             6c11903714edf1993e920d6d5ed8bde3ecc0963d
 )
 add_compile_definitions(GLOG_USE_GLOG_EXPORT)
 
-
-# NOTE - not sure if this is gonna work
 # Install DynamicConnectivity Package
-# it doesn't. the
-
 FetchContent_Declare(
   dycon
   GIT_REPOSITORY  https://github.com/GraphStreamingProject/DynamicConnectivity
   GIT_TAG         733d99e4a6985ef656df716ffe23719a1f29786b
 )
 
-
 # TODO - THERE should be a better way to do this that doesn't rely on populate and add_subdirectory
 FetchContent_Populate(dycon)
 add_subdirectory(${dycon_SOURCE_DIR} ${dycon_BINARY_DIR} EXCLUDE_FROM_ALL)
-
 FetchContent_MakeAvailable(GraphZeppelinVerifyCC)
 
 FetchContent_Declare(abseil-cpp
@@ -98,16 +111,6 @@ FetchContent_Declare(
   GIT_TAG        v2.1.2
 )
 FetchContent_MakeAvailable(mimalloc)
-
-# Fetch oneTBB
-set(TBB_TEST OFF CACHE BOOL "" FORCE)
-set(TBB_STRICT OFF CACHE BOOL "Disable strict warnings as errors for TBB" FORCE)
-FetchContent_Declare(
-  onetbb
-  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
-  GIT_TAG        v2022.3.0
-)
-FetchContent_MakeAvailable(onetbb)
 
 # add_executable(ufo_tests
 #   test/test_runner.cpp
