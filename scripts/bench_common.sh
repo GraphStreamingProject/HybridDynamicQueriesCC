@@ -22,6 +22,7 @@ HEIGHT_FACTOR=""
 NUM_TIERS=""
 NP=""
 MPI_FLAGS=""
+RANK0_CPUS="1"
 HYBRID_THRESHOLD=""
 AUTO_BUILD=false
 
@@ -39,6 +40,7 @@ bench_parse_common_args() {
       (--num-tiers)        NUM_TIERS="$2"; shift 2;;
       (--np)               NP="$2"; shift 2;;
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
+      (--rank0-cpus)       RANK0_CPUS="$2"; shift 2;;
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
       (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
@@ -88,6 +90,11 @@ bench_parse_common_args() {
     echo "ERROR: --stream is required"
     exit 1
   fi
+
+  if ! [[ "$RANK0_CPUS" =~ ^[0-9]+$ ]] || [[ "$RANK0_CPUS" -lt 1 ]]; then
+    echo "ERROR: --rank0-cpus must be a positive integer (got '$RANK0_CPUS')"
+    exit 1
+  fi
 }
 
 # Resolve the binary path and auto-build if needed
@@ -130,11 +137,53 @@ bench_run() {
       echo "ERROR: --np is required for MPI configs (config=$CONFIG)"
       exit 1
     fi
-    if [[ -z "$MPI_FLAGS" ]]; then
-      MPI_FLAGS="--oversubscribe"
+    local default_mpi_flags
+    if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+      # In a Slurm allocation, prefer strict one-rank-per-core placement.
+      default_mpi_flags="--bind-to core --map-by slot"
+    else
+      default_mpi_flags="--oversubscribe"
     fi
-    echo "Running: mpirun -np ${NP} ${MPI_FLAGS} ${BINARY} ${BENCH_ARGS[*]}"
-    mpirun -np "${NP}" ${MPI_FLAGS} "${BINARY}" "${BENCH_ARGS[@]}"
+
+    if [[ "$RANK0_CPUS" -gt 1 ]]; then
+      local rankfile
+      local needed_cpus
+      local slurm_cpus
+      rankfile="$(mktemp "${TMPDIR:-/tmp}/dqcc_rankfile.XXXXXX")"
+      needed_cpus=$((NP + RANK0_CPUS - 1))
+      slurm_cpus="${SLURM_CPUS_ON_NODE:-}"
+
+      if [[ -n "$slurm_cpus" ]] && [[ "$slurm_cpus" =~ ^[0-9]+$ ]] && [[ "$slurm_cpus" -lt "$needed_cpus" ]]; then
+        echo "ERROR: rank0-cpus=${RANK0_CPUS} with np=${NP} needs at least ${needed_cpus} CPUs on node, but SLURM_CPUS_ON_NODE=${slurm_cpus}."
+        rm -f "$rankfile"
+        exit 1
+      fi
+
+      {
+        printf "rank 0=localhost slot=0-%d\n" "$((RANK0_CPUS - 1))"
+        local r
+        local core
+        core="$RANK0_CPUS"
+        for ((r=1; r<NP; r++)); do
+          printf "rank %d=localhost slot=%d\n" "$r" "$core"
+          core=$((core + 1))
+        done
+      } > "$rankfile"
+
+      local effective_mpi_flags="${MPI_FLAGS}"
+      local rc
+      rc=0
+      echo "Running: mpirun -np ${NP} --rankfile ${rankfile} --bind-to core ${effective_mpi_flags} ${BINARY} ${BENCH_ARGS[*]}"
+      mpirun -np "${NP}" --rankfile "$rankfile" --bind-to core ${effective_mpi_flags} "${BINARY}" "${BENCH_ARGS[@]}" || rc=$?
+      rm -f "$rankfile"
+      if [[ "$rc" -ne 0 ]]; then
+        return "$rc"
+      fi
+    else
+      local effective_mpi_flags="${default_mpi_flags} ${MPI_FLAGS}"
+      echo "Running: mpirun -np ${NP} ${effective_mpi_flags} ${BINARY} ${BENCH_ARGS[*]}"
+      mpirun -np "${NP}" ${effective_mpi_flags} "${BINARY}" "${BENCH_ARGS[@]}"
+    fi
   else
     echo "Running: ${BINARY} ${BENCH_ARGS[*]}"
     "${BINARY}" "${BENCH_ARGS[@]}"

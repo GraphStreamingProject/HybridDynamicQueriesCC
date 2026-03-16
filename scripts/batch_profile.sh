@@ -15,9 +15,11 @@ OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-${HOME}/sketch_results}"
 NUM_RUNS="${NUM_RUNS:-2}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
+RANK0_CPUS="1"
 SLURM_MODE=false
 SLURM_PARTITION="long-40core"
 SLURM_TIME="24:00:00"
+CPUS_PER_TASK="1"
 SBATCH_ARGS=""
 SLURM_LOG_DIR=""
 SLURM_TASK_FILE=""
@@ -25,10 +27,12 @@ SLURM_TASK_COUNT=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--np N] [--num-runs N] [--output-base-dir DIR] [--mpi-flags "..."] stream_file1 [stream_file2 ...]
+Usage: $0 [--np N] [--cpus-per-task N] [--rank0-cpus N] [--num-runs N] [--output-base-dir DIR] [--mpi-flags "..."] stream_file1 [stream_file2 ...]
 
 Options:
   --np N                Number of MPI ranks (default: NP env var or 23)
+    --cpus-per-task N     CPUs per MPI rank for SLURM jobs (default: 1)
+    --rank0-cpus N        Extra core binding for rank 0 (default: 1)
   --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 2)
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
     --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
@@ -50,6 +54,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --num-runs)
             NUM_RUNS="$2"
+            shift 2
+            ;;
+        --cpus-per-task)
+            CPUS_PER_TASK="$2"
+            shift 2
+            ;;
+        --rank0-cpus)
+            RANK0_CPUS="$2"
             shift 2
             ;;
         --output-base-dir)
@@ -115,6 +127,21 @@ fi
 
 if ! [[ "$NP" =~ ^[0-9]+$ ]] || [[ "$NP" -lt 1 ]]; then
     echo "Error: --np must be a positive integer (got '$NP')."
+    exit 1
+fi
+
+if ! [[ "$CPUS_PER_TASK" =~ ^[0-9]+$ ]] || [[ "$CPUS_PER_TASK" -lt 1 ]]; then
+    echo "Error: --cpus-per-task must be a positive integer (got '$CPUS_PER_TASK')."
+    exit 1
+fi
+
+if ! [[ "$RANK0_CPUS" =~ ^[0-9]+$ ]] || [[ "$RANK0_CPUS" -lt 1 ]]; then
+    echo "Error: --rank0-cpus must be a positive integer (got '$RANK0_CPUS')."
+    exit 1
+fi
+
+if [[ "$RANK0_CPUS" -gt 1 ]] && [[ "$CPUS_PER_TASK" -ne 1 ]]; then
+    echo "Error: --rank0-cpus and --cpus-per-task>1 conflict; use cpus-per-task=1 for rank0-only expansion."
     exit 1
 fi
 
@@ -193,6 +220,9 @@ for stream_file in "${STREAM_FILES[@]}"; do
         if [[ -n "$MPI_FLAGS" ]]; then
             mpi_args+=(--mpi-flags "$MPI_FLAGS")
         fi
+        if [[ "$RANK0_CPUS" -gt 1 ]]; then
+            mpi_args+=(--rank0-cpus "$RANK0_CPUS")
+        fi
         
         echo "Config: ${cfg_name} | Suffix: ${run_suffix}"
 
@@ -261,13 +291,18 @@ if $SLURM_MODE; then
     mkdir -p "$SLURM_LOG_DIR"
 
     ARRAY_MAX=$((SLURM_TASK_COUNT - 1))
+    ALLOC_TASKS_PER_NODE="$NP"
+    if [[ "$RANK0_CPUS" -gt 1 ]]; then
+        ALLOC_TASKS_PER_NODE=$((NP + RANK0_CPUS - 1))
+    fi
     JOB_SCRIPT="${SLURM_LOG_DIR}/batch_profile_array.sh"
     {
         echo "#!/bin/bash"
         echo "#SBATCH --job-name=batch_profile"
         echo "#SBATCH --array=0-${ARRAY_MAX}"
         echo "#SBATCH --nodes=1"
-        echo "#SBATCH --ntasks-per-node=${NP}"
+        echo "#SBATCH --ntasks-per-node=${ALLOC_TASKS_PER_NODE}"
+        echo "#SBATCH --cpus-per-task=${CPUS_PER_TASK}"
         echo "#SBATCH --time=${SLURM_TIME}"
         echo "#SBATCH --output=${SLURM_LOG_DIR}/profile_%A_%a.out"
         echo "#SBATCH --error=${SLURM_LOG_DIR}/profile_%A_%a.err"
