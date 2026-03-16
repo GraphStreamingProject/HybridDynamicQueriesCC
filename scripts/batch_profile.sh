@@ -146,6 +146,10 @@ if ! [[ "$RANK0_CPUS" =~ ^[0-9]+$ ]] || [[ "$RANK0_CPUS" -lt 1 ]]; then
     exit 1
 fi
 
+if [[ "$OUTPUT_BASE_DIR" != "/" ]]; then
+    OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR%/}"
+fi
+
 if [[ "$RANK0_CPUS" -gt 1 ]] && [[ "$CPUS_PER_TASK" -ne 1 ]]; then
     echo "Error: --rank0-cpus and --cpus-per-task>1 conflict; use cpus-per-task=1 for rank0-only expansion."
     exit 1
