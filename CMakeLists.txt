@@ -27,7 +27,7 @@ message(STATUS "DynamicQueries Build Type: ${CMAKE_BUILD_TYPE}")
 # controversial choice: return-type warnings should be promoted to errors
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
   message("Adding GNU compiler flags")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall -Werror=return-type")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall -Werror=return-type -Wno-error=stringop-overflow -Wno-stringop-overflow")
 elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   message("Adding MSVC compiler flags")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Wall")
@@ -88,7 +88,26 @@ FetchContent_Declare(abseil-cpp
 FetchContent_MakeAvailable(abseil-cpp)
 
 
-find_package(TBB REQUIRED)
+# Fetch mimalloc
+set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
+set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  mimalloc
+  GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+  GIT_TAG        v2.1.2
+)
+FetchContent_MakeAvailable(mimalloc)
+
+# Fetch oneTBB
+set(TBB_TEST OFF CACHE BOOL "" FORCE)
+set(TBB_STRICT OFF CACHE BOOL "Disable strict warnings as errors for TBB" FORCE)
+FetchContent_Declare(
+  onetbb
+  GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
+  GIT_TAG        v2022.3.0
+)
+FetchContent_MakeAvailable(onetbb)
 
 # add_executable(ufo_tests
 #   test/test_runner.cpp
@@ -117,7 +136,9 @@ add_executable(dynamicCC_tests
 )
 target_include_directories(dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(dynamicCC_tests GraphZeppelinVerifyCC dycon)
-target_link_libraries(dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} TBB::tbb parlay)
+# force mimalloc linking on tests, TODO - we should probably just leave this as a user option? not sure / TBD.
+# TODO - evaluate performance impact of mimalloc.
+target_link_libraries(dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} tbb parlay -Wl,--no-as-needed mimalloc -Wl,--as-needed)
 
 target_compile_options(dynamicCC_tests PUBLIC -fopenmp)
 target_link_options(dynamicCC_tests PUBLIC -fopenmp)
@@ -180,7 +201,7 @@ add_executable(hybrid_shmem_dynamicCC_tests
 target_compile_definitions(hybrid_shmem_dynamicCC_tests PUBLIC SKETCH_BUFFER_SIZE=${SKETCH_BUFFER_SIZE})
 target_include_directories(hybrid_shmem_dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(hybrid_shmem_dynamicCC_tests GraphZeppelinVerifyCC dycon)
-target_link_libraries(hybrid_shmem_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} TBB::tbb)
+target_link_libraries(hybrid_shmem_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} tbb -Wl,--no-as-needed mimalloc -Wl,--as-needed)
 
 target_compile_options(hybrid_shmem_dynamicCC_tests PUBLIC -fopenmp)
 target_link_options(hybrid_shmem_dynamicCC_tests PUBLIC -fopenmp)
@@ -227,10 +248,10 @@ function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE
   # Determine source files and link libraries based on tier algo
   if(CUPCAKE_ALGO STREQUAL "mpi_tiers")
     set(_SOURCES ${MPI_BENCH_SOURCES})
-    set(_EXTRA_LIBS ${MPI_LIBRARIES})
+    set(_EXTRA_LIBS ${MPI_LIBRARIES} -Wl,--no-as-needed mimalloc -Wl,--as-needed)
   else()
     set(_SOURCES ${SHMEM_BENCH_SOURCES})
-    set(_EXTRA_LIBS TBB::tbb)
+    set(_EXTRA_LIBS tbb -Wl,--no-as-needed mimalloc -Wl,--as-needed)
   endif()
 
   foreach(BENCH_TYPE speed profile)
