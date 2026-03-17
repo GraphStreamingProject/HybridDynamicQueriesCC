@@ -2,12 +2,13 @@
  * bench_speed.cpp — Standalone speed benchmark harness.
  *
  * Compile-time configuration via CMake -D flags:
- *   CUPCAKE_ALGO:   graph_tiers | batch_tiers | mpi_tiers
- *   CUTSET_DS:   ett | lct | ufo
- *   USE_HYBRID:  0 | 1
+ * CUPCAKE_ALGO:   graph_tiers | batch_tiers | mpi_tiers
+ * CUTSET_DS:   ett | lct | ufo
+ * USE_HYBRID:   0 | 1
  *
  * Runtime parameters (CLI):
- *   <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N] [--output path.tsv]
+ * <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N] [--output path.tsv]
+ * [--static-graph] [--do-deletions] [--num-queries N]
  *
  * For MPI configs, launch via mpirun.
  */
@@ -17,10 +18,14 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <random>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 #include "binary_graph_stream.h"
+#include "utils/graph_util.h"
 #include "util.h"
 
 // Include all possible backends
@@ -72,7 +77,6 @@
   #define NEEDS_MPI 0
   #define IS_HYBRID 0
 #elif defined(CUPCAKE_ALGO_MPI_TIERS) && !(defined(USE_HYBRID) && USE_HYBRID)
-  // MPI: InputNode + TierNode<CUTSET_TYPE>
   using BenchTierNode = TierNode<CUTSET_TYPE>;
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
@@ -88,7 +92,6 @@
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_MPI_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  // Hybrid MPI: SerialConnectivityManager<InputNode>
   using BenchSystem = SerialConnectivityManager<>;
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
@@ -109,8 +112,6 @@
   #define SKETCH_NAME "fixed"
 #endif
 
-// ========== Globals required by library (extern in headers) ==========
-// NOTE: sketch_len, sketch_err, height_factor are defined in skiplist.cpp
 std::string stream_file;
 int batch_size_arg = 0;
 double height_factor_arg = 0;
@@ -129,11 +130,16 @@ static std::string basename_of(const std::string& path) {
 
 struct BenchConfig {
     std::string stream_path;
-    int batch_size = 0;       // 0 = use default
-    double height_factor = 0; // 0 = auto-compute
-    int num_tiers = 0;        // 0 = auto-compute
-    int hybrid_threshold = 0; // 0 = use default
-    std::string output_path;  // empty = stdout
+    int batch_size = 0;
+    double height_factor = 0;
+    int num_tiers = 0;
+    int hybrid_threshold = 0;
+    std::string output_path;
+
+    // Static Graph Flags
+    bool static_graph = false;
+    bool do_deletions = false;
+    size_t num_queries = 0;
 };
 
 static BenchConfig parse_args(int argc, char** argv) {
@@ -141,7 +147,8 @@ static BenchConfig parse_args(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
-                     "[--num-tiers N] [--hybrid-threshold N] [--output path.tsv]"
+                     "[--num-tiers N] [--hybrid-threshold N] [--output path.tsv]\n"
+                  << "        [--static-graph] [--do-deletions] [--num-queries Q]"
                   << std::endl;
         exit(1);
     }
@@ -153,39 +160,86 @@ static BenchConfig parse_args(int argc, char** argv) {
         else if (arg == "--num-tiers" && i + 1 < argc) cfg.num_tiers = std::atoi(argv[++i]);
         else if (arg == "--hybrid-threshold" && i + 1 < argc) cfg.hybrid_threshold = std::atoi(argv[++i]);
         else if (arg == "--output" && i + 1 < argc) cfg.output_path = argv[++i];
+        else if (arg == "--static-graph") cfg.static_graph = true;
+        else if (arg == "--do-deletions") cfg.do_deletions = true;
+        else if (arg == "--num-queries" && i + 1 < argc) cfg.num_queries = std::stoull(argv[++i]);
     }
     return cfg;
 }
 
-static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg,
-                            const std::string& config_name, node_id_t num_nodes,
-                            long total_ops, long update_time_us, long query_time_us,
-                            int actual_batch_size, double actual_height_factor,
-                            int actual_num_tiers) {
-    // Header
+// ======================= Stream Output Writers =======================
+
+static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
+                            long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
     out << "stream\tconfig\tnum_nodes\ttotal_ops\tupdate_time_ms\tquery_time_ms\t"
-           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers"
-        << std::endl;
+           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\n";
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
-    // Estimate 90% updates, 10% queries (matches stream format)
     long est_updates = static_cast<long>(0.9 * total_ops);
     long est_queries = total_ops - est_updates;
     double ups = (update_ms > 0) ? (static_cast<double>(est_updates) / update_ms * 1000.0) : 0;
     double qps = (query_ms > 0) ? (static_cast<double>(est_queries) / query_ms * 1000.0) : 0;
 
-    out << basename_of(cfg.stream_path) << "\t"
-        << config_name << "\t"
-        << num_nodes << "\t"
-        << total_ops << "\t"
-        << update_ms << "\t"
-        << query_ms << "\t"
-        << static_cast<long>(ups) << "\t"
-        << static_cast<long>(qps) << "\t"
-        << actual_batch_size << "\t"
-        << actual_height_factor << "\t"
-        << actual_num_tiers
-        << std::endl;
+    out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << total_ops << "\t"
+        << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\n";
+}
+
+static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
+                               long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+    long update_ms = update_time_us / 1000;
+    long query_ms = query_time_us / 1000;
+    long est_updates = static_cast<long>(0.9 * total_ops);
+    long est_queries = total_ops - est_updates;
+    double ups = (update_ms > 0) ? (static_cast<double>(est_updates) / update_ms * 1000.0) : 0;
+    double qps = (query_ms > 0) ? (static_cast<double>(est_queries) / query_ms * 1000.0) : 0;
+
+    int w = 20;
+    out << "\n" << std::string(45, '=') << "\n Benchmark Stream Results\n" << std::string(45, '=') << "\n"
+        << std::left << std::setw(w) << "Stream" << ": " << basename_of(cfg.stream_path) << "\n"
+        << std::setw(w) << "Configuration" << ": " << config_name << "\n"
+        << std::setw(w) << "Num Nodes" << ": " << num_nodes << "\n"
+        << std::setw(w) << "Total Ops" << ": " << total_ops << "\n"
+        << std::setw(w) << "Update Time (ms)"<< ": " << update_ms << "\n"
+        << std::setw(w) << "Query Time (ms)" << ": " << query_ms << "\n"
+        << std::setw(w) << "Updates/sec" << ": " << static_cast<long>(ups) << "\n"
+        << std::setw(w) << "Queries/sec" << ": " << static_cast<long>(qps) << "\n"
+        << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
+        << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
+        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
+        << std::string(45, '=') << std::endl;
+}
+
+// ======================= Static Output Writers =======================
+
+static void write_static_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
+                                   long edgecount, long ins_time_us, long q_time_us, long del_time_us,
+                                   int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers\n";
+    out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << edgecount << "\t" << cfg.num_queries << "\t"
+        << (ins_time_us/1000) << "\t" << (q_time_us/1000) << "\t" << (del_time_us/1000) << "\t"
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\n";
+}
+
+static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
+                                      long edgecount, long ins_time_us, long q_time_us, long del_time_us,
+                                      int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+    int w = 24;
+    out << "\n" << std::string(50, '=') << "\n Benchmark Static Graph Results\n" << std::string(50, '=') << "\n"
+        << std::left << std::setw(w) << "Graph File" << ": " << basename_of(cfg.stream_path) << "\n"
+        << std::setw(w) << "Configuration" << ": " << config_name << "\n"
+        << std::setw(w) << "Num Nodes" << ": " << num_nodes << "\n"
+        << std::setw(w) << "Total Edges" << ": " << edgecount << "\n"
+        << std::setw(w) << "Num Queries" << ": " << cfg.num_queries << "\n"
+        << std::setw(w) << "Insert Phase (ms)" << ": " << (ins_time_us/1000) << "\n";
+    if (cfg.num_queries > 0) out << std::setw(w) << "Query Phase (ms)" << ": " << (q_time_us/1000) << "\n";
+    if (cfg.do_deletions) {
+        out << std::setw(w) << "Delete Phase (ms)" << ": " << (del_time_us/1000) << "\n";
+    }
+    out << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
+        << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
+        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
+        << std::string(50, '=') << std::endl;
 }
 
 // ========== Main ==========
@@ -195,15 +249,46 @@ int main(int argc, char** argv) {
     int world_rank, world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    bool is_rank_0 = (world_rank == 0);
+#else
+    bool is_rank_0 = true;
 #endif
 
     BenchConfig cfg = parse_args(argc, argv);
     std::string config_name = std::string(TIER_NAME) + "_" + CUTSET_NAME + "_" + SKETCH_NAME;
     if (IS_HYBRID) config_name += "_hybrid";
 
-    BinaryGraphStream stream(cfg.stream_path, 100000);
-    node_id_t num_nodes = stream.nodes();
-    long edgecount = stream.edges();
+    node_id_t num_nodes = 0;
+    long edgecount = 0;
+    
+    // We will hold variables specifically for the stream or static graph
+    BinaryGraphStream* stream_ptr = nullptr;
+    std::vector<std::pair<node_id_t, node_id_t>> static_edges;
+
+    if (is_rank_0) {
+        if (!cfg.static_graph) {
+            stream_ptr = new BinaryGraphStream(cfg.stream_path, 100000);
+            num_nodes = stream_ptr->nodes();
+            edgecount = stream_ptr->edges();
+        } else {
+            auto G = ufo::graph_utils::break_sym_graph_from_bin(cfg.stream_path);
+            auto E = parlay::remove_duplicates_ordered(ufo::graph_utils::to_edges(G), [&] (ufo::graph_utils::edge a, ufo::graph_utils::edge b) {
+                if (a.first == b.first) return a.second < b.second;
+                return a.first < b.first;
+            });
+            num_nodes = G.size();
+            edgecount = E.size();
+            static_edges.reserve(E.size());
+            for (size_t i = 0; i < E.size(); i++) {
+                static_edges.push_back({E[i].first, E[i].second});
+            }
+        }
+    }
+
+#if NEEDS_MPI
+    // Broadcast metadata to all ranks
+    bcast(&num_nodes, sizeof(node_id_t), 0);
+#endif
 
     // Resolve defaults
     double hf = (cfg.height_factor > 0) ? cfg.height_factor : 1.0 / log2(log2(num_nodes));
@@ -226,22 +311,19 @@ int main(int argc, char** argv) {
     uint64_t seed = dist(rng);
 
 #if NEEDS_MPI
-    // Broadcast seed
     int seed_int = static_cast<int>(seed);
     bcast(&seed_int, sizeof(int), 0);
     seed = seed_int;
     rng.seed(seed);
     for (int i = 0; i < world_rank; i++) dist(rng);
-#if NEEDS_MPI
     int tier_seed = dist(rng);
 #else
-    int tier_seed = 0; // Unused for non-MPI but required by compiler scope for other unused statements
-#endif
+    int tier_seed = 0;
 #endif
 
     // ==================== Shmem / Hybrid-Shmem path ====================
 #if !NEEDS_MPI
-    (void)actual_batch_size; // may be unused for GraphTiers
+    (void)actual_batch_size;
 
   #if IS_HYBRID
     BenchSystem system(num_nodes, actual_num_tiers, actual_batch_size, seed);
@@ -253,57 +335,110 @@ int main(int argc, char** argv) {
     system.initialize_all_nodes();
   #endif
 
-    long total_update_time = 0;
-    long total_query_time = 0;
-    auto update_timer = std::chrono::high_resolution_clock::now();
-    auto query_timer = update_timer;
-    bool doing_updates = true;
+    if (!cfg.static_graph) {
+        long total_update_time = 0;
+        long total_query_time = 0;
+        auto update_timer = std::chrono::high_resolution_clock::now();
+        auto query_timer = update_timer;
+        bool doing_updates = true;
+        bool query_checksum = 0;
 
-    for (long i = 0; i < edgecount; i++) {
-        GraphUpdate operation = stream.get_edge();
-        if (operation.type == 2) {  // query
-            if (doing_updates) {
-                total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::high_resolution_clock::now() - update_timer).count();
-                doing_updates = false;
-                query_timer = std::chrono::high_resolution_clock::now();
+        for (long i = 0; i < edgecount; i++) {
+            GraphUpdate operation = stream_ptr->get_edge();
+            if (operation.type == 2) { 
+                if (doing_updates) {
+                    total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::high_resolution_clock::now() - update_timer).count();
+                    doing_updates = false;
+                    query_timer = std::chrono::high_resolution_clock::now();
+                }
+              #if IS_HYBRID
+                query_checksum ^= system.connectivity_query(operation.edge.src, operation.edge.dst);
+              #else
+                query_checksum ^= system.is_connected(operation.edge.src, operation.edge.dst);
+              #endif
+            } else {
+                if (!doing_updates) {
+                    total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::high_resolution_clock::now() - query_timer).count();
+                    doing_updates = true;
+                    update_timer = std::chrono::high_resolution_clock::now();
+                }
+                system.update(operation);
             }
-          #if IS_HYBRID
-            system.connectivity_query(operation.edge.src, operation.edge.dst);
-          #else
-            system.is_connected(operation.edge.src, operation.edge.dst);
-          #endif
-        } else {
-            if (!doing_updates) {
-                total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::high_resolution_clock::now() - query_timer).count();
-                doing_updates = true;
-                update_timer = std::chrono::high_resolution_clock::now();
-            }
-          #if IS_HYBRID
-            system.update(operation);
-          #else
-            system.update(operation);
-          #endif
         }
-    }
-    // Flush remaining timer
-    if (doing_updates) {
-        total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now() - update_timer).count();
-    } else {
-        total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now() - query_timer).count();
-    }
+        if (doing_updates) total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+        else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
+        volatile uint64_t escape = query_checksum;
 
-    // Output
-    if (cfg.output_path.empty()) {
-        write_speed_tsv(std::cout, cfg, config_name, num_nodes, edgecount,
-                        total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+        if (cfg.output_path.empty()) {
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+        } else {
+            std::ofstream out(cfg.output_path);
+            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+        }
+
     } else {
-        std::ofstream out(cfg.output_path);
-        write_speed_tsv(out, cfg, config_name, num_nodes, edgecount,
-                        total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+        // === STATIC GRAPH MODE ===
+        std::mt19937 gen(seed);
+        
+        // Shuffle for insertion
+        std::shuffle(static_edges.begin(), static_edges.end(), gen);
+
+        // Phase 1: Inserts
+        auto ins_timer = std::chrono::high_resolution_clock::now();
+        for (const auto& e : static_edges) {
+            GraphUpdate op;
+            op.type = INSERT;
+            op.edge.src = e.first;
+            op.edge.dst = e.second;
+            system.update(op);
+        }
+        long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
+
+        // Phase 2: Queries after insert
+        long q_ins_time_us = 0;
+        if (cfg.num_queries > 0) {
+            std::vector<std::pair<node_id_t, node_id_t>> queries(cfg.num_queries);
+            std::uniform_int_distribution<node_id_t> node_dist(0, num_nodes - 1);
+            for (size_t i = 0; i < cfg.num_queries; ++i) queries[i] = {node_dist(gen), node_dist(gen)};
+            bool query_checksum = 0;
+
+            auto q_timer = std::chrono::high_resolution_clock::now();
+            for (const auto& q : queries) {
+              #if IS_HYBRID
+                query_checksum ^= system.connectivity_query(q.first, q.second);
+              #else
+                query_checksum ^= system.is_connected(q.first, q.second);
+              #endif
+            }
+            q_ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - q_timer).count();
+            volatile uint64_t escape = query_checksum;
+        }
+
+        // Phase 3: Deletes
+        long del_time_us = 0;
+        if (cfg.do_deletions) {
+            std::shuffle(static_edges.begin(), static_edges.end(), gen);
+            auto del_timer = std::chrono::high_resolution_clock::now();
+            for (const auto& e : static_edges) {
+                GraphUpdate op;
+                op.type = DELETE;
+                op.edge.src = e.first;
+                op.edge.dst = e.second;
+                system.update(op);
+            }
+            del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
+        }
+
+        if (cfg.output_path.empty()) {
+            write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+        } else {
+            std::ofstream out(cfg.output_path);
+            write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+            write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+        }
     }
 
 #endif  // !NEEDS_MPI
@@ -319,38 +454,94 @@ int main(int argc, char** argv) {
         system.initialize_all_nodes();
       #endif
 
-        long total_update_time = 0;
-        long total_query_time = 0;
-        auto update_timer = std::chrono::high_resolution_clock::now();
-        auto query_timer = update_timer;
-        bool doing_updates = true;
+        if (!cfg.static_graph) {
+            long total_update_time = 0;
+            long total_query_time = 0;
+            auto update_timer = std::chrono::high_resolution_clock::now();
+            auto query_timer = update_timer;
+            bool doing_updates = true;
+            bool query_checksum = 0;
 
-        for (long i = 0; i < edgecount; i++) {
-            GraphUpdate operation = stream.get_edge();
-            if (operation.type == 2) {
-                if (doing_updates) {
-                    total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::high_resolution_clock::now() - update_timer).count();
-                    doing_updates = false;
-                    query_timer = std::chrono::high_resolution_clock::now();
+            for (long i = 0; i < edgecount; i++) {
+                GraphUpdate operation = stream_ptr->get_edge();
+                if (operation.type == 2) {
+                    if (doing_updates) {
+                        total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+                        doing_updates = false;
+                        query_timer = std::chrono::high_resolution_clock::now();
+                    }
+                    query_checksum ^= system.connectivity_query(operation.edge.src, operation.edge.dst);
+                } else {
+                    if (!doing_updates) {
+                        total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
+                        doing_updates = true;
+                        update_timer = std::chrono::high_resolution_clock::now();
+                    }
+                    system.update(operation);
                 }
-                system.connectivity_query(operation.edge.src, operation.edge.dst);
-            } else {
-                if (!doing_updates) {
-                    total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::high_resolution_clock::now() - query_timer).count();
-                    doing_updates = true;
-                    update_timer = std::chrono::high_resolution_clock::now();
-                }
-                system.update(operation);
             }
-        }
-        if (doing_updates) {
-            total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::high_resolution_clock::now() - update_timer).count();
+            if (doing_updates) total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+            else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
+            volatile uint64_t escape = query_checksum;
+
+            if (cfg.output_path.empty()) {
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+            } else {
+                std::ofstream out(cfg.output_path);
+                write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+            }
+
         } else {
-            total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::high_resolution_clock::now() - query_timer).count();
+            // === STATIC GRAPH MODE (MPI) ===
+            std::mt19937 gen(seed);
+            
+            std::shuffle(static_edges.begin(), static_edges.end(), gen);
+
+            auto ins_timer = std::chrono::high_resolution_clock::now();
+            for (const auto& e : static_edges) {
+                GraphUpdate op;
+                op.type = INSERT;
+                op.edge.src = e.first;
+                op.edge.dst = e.second;
+                system.update(op);
+            }
+            long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
+            bool query_checksum = 0;
+
+            long q_ins_time_us = 0;
+            if (cfg.num_queries > 0) {
+                std::vector<std::pair<node_id_t, node_id_t>> queries(cfg.num_queries);
+                std::uniform_int_distribution<node_id_t> node_dist(0, num_nodes - 1);
+                for (size_t i = 0; i < cfg.num_queries; ++i) queries[i] = {node_dist(gen), node_dist(gen)};
+                
+                auto q_timer = std::chrono::high_resolution_clock::now();
+                for (const auto& q : queries) query_checksum ^= system.connectivity_query(q.first, q.second);
+                q_ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - q_timer).count();
+            }
+            volatile uint64_t escape = query_checksum;
+
+            long del_time_us = 0;
+            if (cfg.do_deletions) {
+                std::shuffle(static_edges.begin(), static_edges.end(), gen);
+                auto del_timer = std::chrono::high_resolution_clock::now();
+                for (const auto& e : static_edges) {
+                    GraphUpdate op;
+                    op.type = DELETE;
+                    op.edge.src = e.first;
+                    op.edge.dst = e.second;
+                    system.update(op);
+                }
+                del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
+            }
+
+            if (cfg.output_path.empty()) {
+                write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+            } else {
+                std::ofstream out(cfg.output_path);
+                write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+                write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, actual_batch_size, hf, actual_num_tiers);
+            }
         }
 
       #if IS_HYBRID
@@ -359,14 +550,6 @@ int main(int argc, char** argv) {
         system.end();
       #endif
 
-        if (cfg.output_path.empty()) {
-            write_speed_tsv(std::cout, cfg, config_name, num_nodes, edgecount,
-                            total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
-        } else {
-            std::ofstream out(cfg.output_path);
-            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount,
-                            total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
-        }
     } else if (world_rank <= (int)actual_num_tiers) {
         TierNode<CUTSET_TYPE> tier_node(num_nodes, world_rank - 1, actual_num_tiers, actual_batch_size, tier_seed);
         tier_node.main();
@@ -375,5 +558,6 @@ int main(int argc, char** argv) {
     MPI_Finalize();
 #endif  // NEEDS_MPI
 
+    if (stream_ptr) delete stream_ptr;
     return 0;
 }
