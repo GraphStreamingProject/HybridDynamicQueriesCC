@@ -46,7 +46,15 @@
 #endif
 
 #if defined(USE_HYBRID) && USE_HYBRID
-  #include "serial_hybrid_conn.h"
+  #if defined(USE_PARALLEL_HYBRID) && USE_PARALLEL_HYBRID
+    #include "parallel_hybrid_conn.h"
+    template<typename T = InputNode>
+    using HybridConnManager = ParallelConnectivityManager<T>;
+  #else
+    #include "serial_hybrid_conn.h"
+    template<typename T = InputNode>
+    using HybridConnManager = SerialConnectivityManager<T>;
+  #endif
 #endif
 
 // ========== Cutset DS selection ==========
@@ -82,17 +90,17 @@
   #define NEEDS_MPI 1
   #define IS_HYBRID 0
 #elif defined(CUPCAKE_ALGO_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<BatchTiers<CUTSET_TYPE>>;
+  using BenchSystem = HybridConnManager<BatchTiers<CUTSET_TYPE>>;
   #define TIER_NAME "batch_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_GRAPH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<GraphTiers<CUTSET_TYPE>>;
+  using BenchSystem = HybridConnManager<GraphTiers<CUTSET_TYPE>>;
   #define TIER_NAME "graph_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_MPI_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<>;
+  using BenchSystem = HybridConnManager<>;
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1
@@ -367,6 +375,9 @@ int main(int argc, char** argv) {
                 system.update(operation);
             }
         }
+      #if IS_HYBRID
+        system.force_sync();
+      #endif
         if (doing_updates) total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
         else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
         volatile uint64_t escape = query_checksum;
@@ -395,6 +406,9 @@ int main(int argc, char** argv) {
             op.edge.dst = e.second;
             system.update(op);
         }
+      #if IS_HYBRID
+        system.force_sync();
+      #endif
         long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
 
         // Phase 2: Queries after insert
@@ -429,6 +443,9 @@ int main(int argc, char** argv) {
                 op.edge.dst = e.second;
                 system.update(op);
             }
+          #if IS_HYBRID
+            system.force_sync();
+          #endif
             del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
         }
 
@@ -480,6 +497,9 @@ int main(int argc, char** argv) {
                     system.update(operation);
                 }
             }
+          #if IS_HYBRID
+            system.force_sync();
+          #endif
             if (doing_updates) total_update_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
             else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
             volatile uint64_t escape = query_checksum;
@@ -506,6 +526,9 @@ int main(int argc, char** argv) {
                 op.edge.dst = e.second;
                 system.update(op);
             }
+          #if IS_HYBRID
+            system.force_sync();
+          #endif
             long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
             bool query_checksum = 0;
 
@@ -532,6 +555,9 @@ int main(int argc, char** argv) {
                     op.edge.dst = e.second;
                     system.update(op);
                 }
+              #if IS_HYBRID
+                system.force_sync();
+              #endif
                 del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
             }
 
@@ -545,7 +571,7 @@ int main(int argc, char** argv) {
         }
 
       #if IS_HYBRID
-        system.sketching_algo.end();
+        system.end();
       #else
         system.end();
       #endif

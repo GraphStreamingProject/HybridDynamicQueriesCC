@@ -39,7 +39,15 @@
 #endif
 
 #if defined(USE_HYBRID) && USE_HYBRID
-  #include "serial_hybrid_conn.h"
+  #if defined(USE_PARALLEL_HYBRID) && USE_PARALLEL_HYBRID
+    #include "parallel_hybrid_conn.h"
+    template<typename T = InputNode>
+    using HybridConnManager = ParallelConnectivityManager<T>;
+  #else
+    #include "serial_hybrid_conn.h"
+    template<typename T = InputNode>
+    using HybridConnManager = SerialConnectivityManager<T>;
+  #endif
 #endif
 
 // ========== Cutset DS selection ==========
@@ -75,17 +83,17 @@
   #define NEEDS_MPI 1
   #define IS_HYBRID 0
 #elif defined(CUPCAKE_ALGO_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<BatchTiers<CUTSET_TYPE>>;
+  using BenchSystem = HybridConnManager<BatchTiers<CUTSET_TYPE>>;
   #define TIER_NAME "batch_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_GRAPH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<GraphTiers<CUTSET_TYPE>>;
+  using BenchSystem = HybridConnManager<GraphTiers<CUTSET_TYPE>>;
   #define TIER_NAME "graph_tiers"
   #define NEEDS_MPI 0
   #define IS_HYBRID 1
 #elif defined(CUPCAKE_ALGO_MPI_TIERS) && defined(USE_HYBRID) && USE_HYBRID
-  using BenchSystem = SerialConnectivityManager<>;
+  using BenchSystem = HybridConnManager<>;
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1
@@ -316,7 +324,7 @@ int main(int argc, char** argv) {
         run_profile(system);
 
       #if IS_HYBRID
-        system.sketching_algo.end();
+        system.end();
       #else
         system.end();
       #endif

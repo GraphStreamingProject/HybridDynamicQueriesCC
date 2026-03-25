@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 #set(INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 option(USE_RESIZEABLE_SKETCH "Use ResizeableSketchColumn for test targets" OFF)
+option(USE_PARALLEL_HYBRID "Use ParallelConnectivityManager instead of SerialConnectivityManager for hybrid benchmarks" OFF)
 
 # Make the default build type Release. If user or another
 # project sets a different value than use that
@@ -273,6 +274,9 @@ function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE
     )
     if(USE_RESIZEABLE)
       target_compile_definitions(${TARGET_NAME} PRIVATE USE_RESIZEABLE_SKETCH=1)
+    endif()
+    if(USE_PARALLEL_HYBRID AND USE_HYBRID)
+      target_compile_definitions(${TARGET_NAME} PRIVATE USE_PARALLEL_HYBRID=1)
     endif()
 
     target_include_directories(${TARGET_NAME} PUBLIC include ${MPI_C_INCLUDE_PATH})
