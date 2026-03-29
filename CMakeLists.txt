@@ -167,6 +167,26 @@ target_link_libraries(mpi_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${
 target_compile_options(mpi_dynamicCC_tests PUBLIC -fopenmp)
 target_link_options(mpi_dynamicCC_tests PUBLIC -fopenmp)
 
+add_executable(mpi_batch_dynamicCC_tests
+  test/mpi_test_runner.cpp
+  test/mpi_batch_graph_tiers_test.cpp
+
+  src/skiplist.cpp
+  src/sketchless_skiplist.cpp
+  src/euler_tour_tree.cpp
+  src/sketchless_euler_tour_tree.cpp
+  src/link_cut_tree.cpp
+  src/batch_input_node.cpp
+  src/batch_tier_node.cpp
+)
+target_compile_definitions(mpi_batch_dynamicCC_tests PUBLIC SKETCH_BUFFER_SIZE=${SKETCH_BUFFER_SIZE})
+target_include_directories(mpi_batch_dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
+add_dependencies(mpi_batch_dynamicCC_tests GraphZeppelinVerifyCC dycon)
+target_link_libraries(mpi_batch_dynamicCC_tests PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES})
+
+target_compile_options(mpi_batch_dynamicCC_tests PUBLIC -fopenmp)
+target_link_options(mpi_batch_dynamicCC_tests PUBLIC -fopenmp)
+
 
 add_executable(hybrid_mpi_dynamicCC_tests
   test/hybrid_test_runner.cpp
@@ -213,6 +233,7 @@ target_link_options(hybrid_shmem_dynamicCC_tests PUBLIC -fopenmp)
 if(USE_RESIZEABLE_SKETCH)
   target_compile_definitions(dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
   target_compile_definitions(mpi_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
+  target_compile_definitions(mpi_batch_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
   target_compile_definitions(hybrid_mpi_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
   target_compile_definitions(hybrid_shmem_dynamicCC_tests PUBLIC USE_RESIZEABLE_SKETCH=1)
 endif()
@@ -250,7 +271,8 @@ set(MPI_BENCH_SOURCES
 # Creates bench_speed_<NAME> and bench_profile_<NAME>
 function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE)
   # Determine source files and link libraries based on tier algo
-  if(CUPCAKE_ALGO STREQUAL "mpi_tiers")
+  if(CUPCAKE_ALGO STREQUAL "mpi_tiers" OR CUPCAKE_ALGO STREQUAL "MPI_TIERS"
+     OR CUPCAKE_ALGO STREQUAL "mpi_batch_tiers" OR CUPCAKE_ALGO STREQUAL "MPI_BATCH_TIERS")
     set(_SOURCES ${MPI_BENCH_SOURCES})
     set(_EXTRA_LIBS ${MPI_LIBRARIES} -Wl,--no-as-needed mimalloc -Wl,--as-needed)
   else()
@@ -294,7 +316,7 @@ option(BENCH_ALL "Build ALL algo×cutset×sketch×hybrid benchmark configs" OFF)
 
 if(BENCH_ALL)
   # Full matrix: 3 algos × 3 cutsets × 2 sketches × 2 hybrid = 36 configs
-  foreach(ALGO_PAIR "batch;BATCH_TIERS" "graph;GRAPH_TIERS" "mpi;MPI_TIERS")
+  foreach(ALGO_PAIR "batch;BATCH_TIERS" "graph;GRAPH_TIERS" "mpi;MPI_TIERS" "mpi_batch;MPI_BATCH_TIERS")
     list(GET ALGO_PAIR 0 ALGO_LABEL)
     list(GET ALGO_PAIR 1 ALGO_FLAG)
     foreach(CUTSET_PAIR "ufo;UFO" "lct;LCT" "ett;ETT")
@@ -329,5 +351,14 @@ else()
   # Add more one-liners here as needed, e.g.:
   # add_bench_targets(batch_ufo_fixed  BATCH_TIERS UFO 0 0)
   add_bench_targets(cf CF NONE 0 0)
+
+  # MPI Batch Tiers
+  add_bench_targets(mpi_batch_ufo_fixed              MPI_BATCH_TIERS UFO 0 0)
+  add_bench_targets(mpi_batch_lct_fixed              MPI_BATCH_TIERS LCT 0 0)
+  add_bench_targets(mpi_batch_ett_fixed              MPI_BATCH_TIERS ETT 0 0)
+
+  add_bench_targets(mpi_batch_ufo_resizeable         MPI_BATCH_TIERS UFO 0 1)
+  add_bench_targets(mpi_batch_lct_resizeable         MPI_BATCH_TIERS LCT 0 1)
+  add_bench_targets(mpi_batch_ett_resizeable         MPI_BATCH_TIERS ETT 0 1)
 endif()
 

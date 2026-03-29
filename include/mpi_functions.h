@@ -1,3 +1,5 @@
+#pragma once
+
 #include <mpi.h>
 
 static void bcast(void* message, int size, int root) {

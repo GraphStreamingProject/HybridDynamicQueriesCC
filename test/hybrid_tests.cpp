@@ -24,8 +24,8 @@ using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
 // using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
-using HybridManagerType = ParallelConnectivityManager<InputNode>;
-// using HybridManagerType = SerialConnectivityManager<InputNode>;
+// using HybridManagerType = ParallelConnectivityManager<InputNode>;
+using HybridManagerType = SerialConnectivityManager<InputNode>;
 
 static long force_sync_interval() {
     const char* interval_env = std::getenv("FORCE_SYNC_INTERVAL");

@@ -22,7 +22,7 @@
 #include "cutsets/ufo_cutset.h"
 
 
-enum TreeOperationType {
+enum TreeOperationType: uint8_t {
   NOT_ISOLATED=0, ISOLATED=1, EMPTY, LINK, CUT, LCT_QUERY, MAXIMIZED
 };
 

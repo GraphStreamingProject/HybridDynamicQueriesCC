@@ -38,6 +38,12 @@
   #include "../src/tier_node.cpp"
 #endif
 
+#if defined(CUPCAKE_ALGO_MPI_BATCH_TIERS)
+  #include "mpi_batch_nodes.h"
+  #include "../src/batch_input_node.cpp"
+  #include "../src/batch_tier_node.cpp"
+#endif
+
 #if defined(USE_HYBRID) && USE_HYBRID
   #if defined(USE_PARALLEL_HYBRID) && USE_PARALLEL_HYBRID
     #include "parallel_hybrid_conn.h"
@@ -82,6 +88,13 @@
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 0
+#elif defined(CUPCAKE_ALGO_MPI_BATCH_TIERS) && !(defined(USE_HYBRID) && USE_HYBRID)
+  using BenchTierNode = BatchTierNode<CUTSET_TYPE>;
+  using BenchInputNode = BatchInputNode;
+  #define TIER_NAME "mpi_batch_tiers"
+  #define NEEDS_MPI 1
+  #define IS_HYBRID 0
+  #define USE_BATCH_INPUT_NODE 1
 #elif defined(CUPCAKE_ALGO_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
   using BenchSystem = HybridConnManager<BatchTiers<CUTSET_TYPE>>;
   #define TIER_NAME "batch_tiers"
@@ -104,7 +117,7 @@
   #define NEEDS_MPI 0
   #define IS_HYBRID 0
 #else
-  #error "Must define one of CUPCAKE_ALGO_GRAPH_TIERS, CUPCAKE_ALGO_BATCH_TIERS, CUPCAKE_ALGO_MPI_TIERS, CUPCAKE_ALGO_CF"
+  #error "Must define one of CUPCAKE_ALGO_GRAPH_TIERS, CUPCAKE_ALGO_BATCH_TIERS, CUPCAKE_ALGO_MPI_TIERS, CUPCAKE_ALGO_MPI_BATCH_TIERS, CUPCAKE_ALGO_CF"
 #endif
 
 #ifdef USE_RESIZEABLE_SKETCH
@@ -317,7 +330,11 @@ int main(int argc, char** argv) {
         BenchSystem system(num_nodes, actual_num_tiers, actual_batch_size, seed);
         if (cfg.hybrid_threshold > 0) system.set_threshold(cfg.hybrid_threshold);
       #else
+        #if defined(USE_BATCH_INPUT_NODE) && USE_BATCH_INPUT_NODE
+        BatchInputNode system(num_nodes, actual_num_tiers, actual_batch_size, seed);
+        #else
         InputNode system(num_nodes, actual_num_tiers, actual_batch_size, seed);
+        #endif
         system.initialize_all_nodes();
       #endif
 
@@ -329,7 +346,11 @@ int main(int argc, char** argv) {
         system.end();
       #endif
     } else if (world_rank <= (int)actual_num_tiers) {
+        #if defined(USE_BATCH_INPUT_NODE) && USE_BATCH_INPUT_NODE
+        BatchTierNode<CUTSET_TYPE> tier_node(num_nodes, world_rank - 1, actual_num_tiers, actual_batch_size, tier_seed);
+        #else
         TierNode<CUTSET_TYPE> tier_node(num_nodes, world_rank - 1, actual_num_tiers, actual_batch_size, tier_seed);
+        #endif
         tier_node.main();
     }
 
