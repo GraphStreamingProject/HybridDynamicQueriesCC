@@ -110,6 +110,12 @@
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1
+#elif defined(CUPCAKE_ALGO_MPI_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
+  using BenchSystem = HybridConnManager<BatchInputNode>;
+  #define TIER_NAME "mpi_batch_tiers"
+  #define NEEDS_MPI 1
+  #define IS_HYBRID 1
+  #define USE_BATCH_INPUT_NODE 1
 #elif defined(CUPCAKE_ALGO_CF)
   #include "cluster_forest_wrapper.h"
   using BenchSystem = ClusterForestWrapper<>;
@@ -229,7 +235,11 @@ int main(int argc, char** argv) {
     sketch_len = Sketch::calc_vector_length(num_nodes);
     sketch_err = 1;
 
+#if defined(CUPCAKE_ALGO_MPI_BATCH_TIERS)
+    int actual_batch_size = (cfg.batch_size > 0) ? cfg.batch_size : 16834;
+#else
     int actual_batch_size = (cfg.batch_size > 0) ? cfg.batch_size : 100;
+#endif
 
 #if NEEDS_MPI
     uint32_t actual_num_tiers = (cfg.num_tiers > 0) ? cfg.num_tiers : (world_size - 1);

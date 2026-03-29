@@ -2,13 +2,13 @@
  * bench_speed.cpp — Standalone speed benchmark harness.
  *
  * Compile-time configuration via CMake -D flags:
- * CUPCAKE_ALGO:   graph_tiers | batch_tiers | mpi_tiers
+ * CUPCAKE_ALGO:   graph_tiers | batch_tiers | mpi_tiers | mpi_batch_tiers
  * CUTSET_DS:   ett | lct | ufo
  * USE_HYBRID:   0 | 1
  *
  * Runtime parameters (CLI):
  * <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N] [--output path.tsv]
- * [--static-graph] [--do-deletions] [--num-queries N]
+ * [--static-graph] [--do-deletions] [--num-queries N] [--speed-interval N]
  *
  * For MPI configs, launch via mpirun.
  */
@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -117,6 +118,12 @@
   #define TIER_NAME "mpi_tiers"
   #define NEEDS_MPI 1
   #define IS_HYBRID 1
+#elif defined(CUPCAKE_ALGO_MPI_BATCH_TIERS) && defined(USE_HYBRID) && USE_HYBRID
+  using BenchSystem = HybridConnManager<BatchInputNode>;
+  #define TIER_NAME "mpi_batch_tiers"
+  #define NEEDS_MPI 1
+  #define IS_HYBRID 1
+  #define USE_BATCH_INPUT_NODE 1
 #elif defined(CUPCAKE_ALGO_CF)
   #include "cluster_forest_wrapper.h"
   using BenchSystem = ClusterForestWrapper<>;
@@ -161,6 +168,9 @@ struct BenchConfig {
     bool static_graph = false;
     bool do_deletions = false;
     size_t num_queries = 0;
+
+    // Periodic speed reporting (0 = disabled)
+    long speed_interval = 0;
 };
 
 static BenchConfig parse_args(int argc, char** argv) {
@@ -169,7 +179,8 @@ static BenchConfig parse_args(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                      "[--num-tiers N] [--hybrid-threshold N] [--output path.tsv]\n"
-                  << "        [--static-graph] [--do-deletions] [--num-queries Q]"
+                  << "        [--static-graph] [--do-deletions] [--num-queries Q]\n"
+                  << "        [--speed-interval N]  (report time every N updates, default: disabled)"
                   << std::endl;
         exit(1);
     }
@@ -184,16 +195,61 @@ static BenchConfig parse_args(int argc, char** argv) {
         else if (arg == "--static-graph") cfg.static_graph = true;
         else if (arg == "--do-deletions") cfg.do_deletions = true;
         else if (arg == "--num-queries" && i + 1 < argc) cfg.num_queries = std::stoull(argv[++i]);
+        else if (arg == "--speed-interval" && i + 1 < argc) cfg.speed_interval = std::atol(argv[++i]);
     }
     return cfg;
 }
 
 // ======================= Stream Output Writers =======================
 
+struct IntervalRecord {
+    long op_index;
+    long num_updates;    // updates in this interval
+    long interval_ms;    // wall-clock ms for this interval
+    long num_edges = 0;  
+    size_t sketched_edges = 0;
+    size_t direct_sketch_edges = 0;
+};
+
+static std::string intervals_path_from(const std::string& output_path) {
+    // foo_speed.tsv -> foo_speed_intervals.tsv
+    auto dot = output_path.rfind('.');
+    if (dot == std::string::npos) return output_path + "_intervals";
+    return output_path.substr(0, dot) + "_intervals" + output_path.substr(dot);
+}
+
+static void write_intervals_tsv(const std::string& path, const std::string& stream_path,
+                                const std::string& config_name,
+                                const std::vector<IntervalRecord>& records) {
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream out(path);
+    out << "stream\tconfig\top_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges"
+#if IS_HYBRID
+        << "\tsketched_edges\tdirect_sketch_edges"
+#endif
+        << "\n";
+    for (const auto& r : records) {
+        double ups = (r.interval_ms > 0)
+            ? (static_cast<double>(r.num_updates) / r.interval_ms * 1000.0) : 0;
+        out << basename_of(stream_path) << "\t" << config_name << "\t"
+            << r.op_index << "\t" << r.num_updates << "\t"
+            << r.interval_ms << "\t" << static_cast<long>(ups) << "\t" << r.num_edges;
+#if IS_HYBRID
+        out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_edges;
+#endif
+        out << "\n";
+    }
+}
+
 static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
-                            long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+                            long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
+                            long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_edges = 0) {
     out << "stream\tconfig\tnum_nodes\ttotal_ops\tupdate_time_ms\tquery_time_ms\t"
-           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\n";
+           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges"
+#if IS_HYBRID
+           "\tsketched_edges\tdirect_sketch_edges"
+#endif
+           "\n";
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
     long est_updates = static_cast<long>(0.9 * total_ops);
@@ -203,11 +259,16 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
 
     out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << total_ops << "\t"
         << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
-        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\n";
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges;
+#if IS_HYBRID
+    out << "\t" << sketched_edges << "\t" << direct_sketch_edges;
+#endif
+    out << "\n";
 }
 
 static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
-                               long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+                               long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
+                               long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_edges = 0) {
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
     long est_updates = static_cast<long>(0.9 * total_ops);
@@ -215,8 +276,8 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
     double ups = (update_ms > 0) ? (static_cast<double>(est_updates) / update_ms * 1000.0) : 0;
     double qps = (query_ms > 0) ? (static_cast<double>(est_queries) / query_ms * 1000.0) : 0;
 
-    int w = 20;
-    out << "\n" << std::string(45, '=') << "\n Benchmark Stream Results\n" << std::string(45, '=') << "\n"
+    int w = 24;
+    out << "\n" << std::string(50, '=') << "\n Benchmark Stream Results\n" << std::string(50, '=') << "\n"
         << std::left << std::setw(w) << "Stream" << ": " << basename_of(cfg.stream_path) << "\n"
         << std::setw(w) << "Configuration" << ": " << config_name << "\n"
         << std::setw(w) << "Num Nodes" << ": " << num_nodes << "\n"
@@ -228,7 +289,12 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
         << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
         << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
-        << std::string(45, '=') << std::endl;
+        << std::setw(w) << "Num Edges" << ": " << num_edges << "\n";
+#if IS_HYBRID
+    out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
+        << std::setw(w) << "Direct Sketch Edges" << ": " << direct_sketch_edges << "\n";
+#endif
+    out << std::string(50, '=') << std::endl;
 }
 
 // ======================= Static Output Writers =======================
@@ -317,7 +383,11 @@ int main(int argc, char** argv) {
     sketch_len = Sketch::calc_vector_length(num_nodes);
     sketch_err = 1;
 
+#if defined(CUPCAKE_ALGO_MPI_BATCH_TIERS)
+    int actual_batch_size = (cfg.batch_size > 0) ? cfg.batch_size : 16834;
+#else
     int actual_batch_size = (cfg.batch_size > 0) ? cfg.batch_size : 100;
+#endif
 
 #if NEEDS_MPI
     uint32_t actual_num_tiers = (cfg.num_tiers > 0) ? cfg.num_tiers : (world_size - 1);
@@ -364,6 +434,12 @@ int main(int argc, char** argv) {
         bool doing_updates = true;
         bool query_checksum = 0;
 
+        // Periodic speed reporting state
+        long updates_since_report = 0;
+        long current_num_edges = 0;
+        auto interval_timer = std::chrono::high_resolution_clock::now();
+        std::vector<IntervalRecord> interval_records;
+
         for (long i = 0; i < edgecount; i++) {
             GraphUpdate operation = stream_ptr->get_edge();
             if (operation.type == 2) { 
@@ -386,6 +462,29 @@ int main(int argc, char** argv) {
                     update_timer = std::chrono::high_resolution_clock::now();
                 }
                 system.update(operation);
+                current_num_edges += (operation.type == INSERT) ? 1 : -1;
+                ++updates_since_report;
+
+                if (cfg.speed_interval > 0 && updates_since_report >= cfg.speed_interval) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - interval_timer).count();
+                    double ups = (interval_ms > 0) ? (static_cast<double>(updates_since_report) / interval_ms * 1000.0) : 0;
+                    std::cout << "[speed] op " << i << "/" << edgecount
+                              << "  last " << updates_since_report << " updates in " << interval_ms << " ms"
+                              << "  (" << static_cast<long>(ups) << " updates/sec)"
+                              << "  edges=" << current_num_edges;
+                  #if IS_HYBRID
+                    size_t ise = system.num_sketched_edges();
+                    size_t idse = system.num_direct_sketch_edges();
+                    std::cout << "  sketched=" << ise << " direct=" << idse;
+                  #else
+                    size_t ise = 0, idse = 0;
+                  #endif
+                    std::cout << std::endl;
+                    interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse});
+                    updates_since_report = 0;
+                    interval_timer = now;
+                }
             }
         }
       #if IS_HYBRID
@@ -395,12 +494,22 @@ int main(int argc, char** argv) {
         else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
         volatile uint64_t escape = query_checksum;
 
+      #if IS_HYBRID
+        size_t se = system.num_sketched_edges();
+        size_t dse = system.num_direct_sketch_edges();
+      #else
+        size_t se = 0, dse = 0;
+      #endif
+
         if (cfg.output_path.empty()) {
-            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
         } else {
             std::ofstream out(cfg.output_path);
-            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
-            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+            if (!interval_records.empty()) {
+                write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
+            }
         }
 
     } else {
@@ -496,6 +605,12 @@ int main(int argc, char** argv) {
             bool doing_updates = true;
             bool query_checksum = 0;
 
+            // Periodic speed reporting state
+            long updates_since_report = 0;
+            long current_num_edges = 0;
+            auto interval_timer = std::chrono::high_resolution_clock::now();
+            std::vector<IntervalRecord> interval_records;
+
             for (long i = 0; i < edgecount; i++) {
                 GraphUpdate operation = stream_ptr->get_edge();
                 if (operation.type == 2) {
@@ -512,6 +627,29 @@ int main(int argc, char** argv) {
                         update_timer = std::chrono::high_resolution_clock::now();
                     }
                     system.update(operation);
+                    current_num_edges += (operation.type == INSERT) ? 1 : -1;
+                    ++updates_since_report;
+
+                    if (cfg.speed_interval > 0 && updates_since_report >= cfg.speed_interval) {
+                        auto now = std::chrono::high_resolution_clock::now();
+                        long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - interval_timer).count();
+                        double ups = (interval_ms > 0) ? (static_cast<double>(updates_since_report) / interval_ms * 1000.0) : 0;
+                        std::cout << "[speed] op " << i << "/" << edgecount
+                                  << "  last " << updates_since_report << " updates in " << interval_ms << " ms"
+                                  << "  (" << static_cast<long>(ups) << " updates/sec)"
+                                  << "  edges=" << current_num_edges;
+                      #if IS_HYBRID
+                        size_t ise = system.num_sketched_edges();
+                        size_t idse = system.num_direct_sketch_edges();
+                        std::cout << "  sketched=" << ise << " direct=" << idse;
+                      #else
+                        size_t ise = 0, idse = 0;
+                      #endif
+                        std::cout << std::endl;
+                        interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse});
+                        updates_since_report = 0;
+                        interval_timer = now;
+                    }
                 }
             }
           #if IS_HYBRID
@@ -521,12 +659,22 @@ int main(int argc, char** argv) {
             else total_query_time += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - query_timer).count();
             volatile uint64_t escape = query_checksum;
 
+          #if IS_HYBRID
+            size_t se = system.num_sketched_edges();
+            size_t dse = system.num_direct_sketch_edges();
+          #else
+            size_t se = 0, dse = 0;
+          #endif
+
             if (cfg.output_path.empty()) {
-                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
             } else {
                 std::ofstream out(cfg.output_path);
-                write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
-                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers);
+                write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+                if (!interval_records.empty()) {
+                    write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
+                }
             }
 
         } else {

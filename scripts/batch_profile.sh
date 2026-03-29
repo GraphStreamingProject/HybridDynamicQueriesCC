@@ -15,6 +15,7 @@ OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-${HOME}/sketch_results}"
 NUM_RUNS="${NUM_RUNS:-2}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
+MPI_ALGO="mpi"
 RANK0_CPUS="1"
 SLURM_MODE=false
 SLURM_PARTITION="long-40core"
@@ -42,6 +43,7 @@ Options:
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
   --slurm-time T        SLURM time limit (default: 24:00:00; max: 48:00:00)
     --sbatch-args "..."   Extra arguments passed to sbatch (jobs are exclusive by default)
+  --mpi-algo ALGO       MPI algorithm: mpi or mpi_batch (default: mpi)
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
   -h, --help            Show this help text
 EOF
@@ -98,6 +100,10 @@ while [[ $# -gt 0 ]]; do
             SLURM_LOG_DIR="$2"
             shift 2
             ;;
+        --mpi-algo)
+            MPI_ALGO="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -143,6 +149,11 @@ fi
 
 if ! [[ "$RANK0_CPUS" =~ ^[0-9]+$ ]] || [[ "$RANK0_CPUS" -lt 1 ]]; then
     echo "Error: --rank0-cpus must be a positive integer (got '$RANK0_CPUS')."
+    exit 1
+fi
+
+if [[ "$MPI_ALGO" != "mpi" && "$MPI_ALGO" != "mpi_batch" ]]; then
+    echo "Error: --mpi-algo must be 'mpi' or 'mpi_batch' (got '$MPI_ALGO')."
     exit 1
 fi
 
@@ -258,34 +269,34 @@ for stream_file in "${STREAM_FILES[@]}"; do
     }
 
     for run in $(seq 1 $NUM_RUNS); do
-        echo "--- Batch Run Item ${run} / ${NUM_RUNS} ---"
+        echo "--- Batch Run Item ${run} / ${NUM_RUNS} (algo=${MPI_ALGO}) ---"
 
         # 1. Hybrid with Threshold 1200
-        register_config --algo mpi --cutset lct --sketch resizeable \
+        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 1200 --auto-build
 
         # 2. Hybrid with Threshold 2500
-        register_config --algo mpi --cutset lct --sketch resizeable \
+        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 2500 --auto-build
 
         # 3. Hybrid with Threshold 500
-        register_config --algo mpi --cutset lct --sketch resizeable \
+        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 500 --auto-build
-        
+
         # 4. Hybrid with Threshold 250
-        register_config --algo mpi --cutset lct --sketch resizeable \
+        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 250 --auto-build
 
         # 5. Pure Sketch
-        register_config --algo mpi --cutset lct --sketch resizeable \
+        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --auto-build
 
-        # 6. Pure CF
+        # 6. Pure CF (always runs regardless of --mpi-algo)
         register_config --algo cf \
             --stream "$stream_file" --output-dir "$output_dir" --auto-build
     done

@@ -12,7 +12,7 @@
 #include "util.h"
 
 
-const int DEFAULT_BATCH_SIZE = 100;
+const int DEFAULT_BATCH_SIZE = 16834;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 using BatchTierNodeSystem = BatchTierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;

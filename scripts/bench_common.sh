@@ -24,6 +24,7 @@ NP=""
 MPI_FLAGS=""
 RANK0_CPUS="1"
 HYBRID_THRESHOLD=""
+SPEED_INTERVAL=""
 AUTO_BUILD=false
 
 bench_parse_common_args() {
@@ -42,6 +43,7 @@ bench_parse_common_args() {
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
       (--rank0-cpus)       RANK0_CPUS="$2"; shift 2;;
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
+      (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
       (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
     esac
@@ -55,7 +57,7 @@ bench_parse_common_args() {
         CONFIG="cf"
       else
         echo "ERROR: specify either --config <name> or --algo <algo> --cutset <cutset>"
-        echo "  --algo:    batch | graph | mpi | cf"
+        echo "  --algo:    batch | graph | mpi | mpi_batch | cf"
         echo "  --cutset:  ufo | lct | ett"
         echo "  --sketch:  fixed | resizeable  (default: resizeable)"
         echo "  --hybrid   (flag, optional)"
@@ -122,6 +124,7 @@ bench_build_args() {
   [[ -n "$HEIGHT_FACTOR" ]]    && BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
   [[ -n "$NUM_TIERS" ]]        && BENCH_ARGS+=(--num-tiers "$NUM_TIERS")
   [[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
+  [[ -n "$SPEED_INTERVAL" ]]   && BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
   return 0
 }
 
