@@ -192,12 +192,17 @@ TEST(GraphTierSuite, hybrid_update_speed_test) {
                 std::cout << "FINISHED UPDATE " << i << " OUT OF " << edgecount << " IN " << stream_file << std::endl;
                 std::cout << "Sketched nodes: " << hybrid_manager.num_sketched_vertices() << " out of " << num_nodes << std::endl;
                 std::cout << "-  Total edges: " << hybrid_manager.total_edges() << std::endl;
+                std::cout << "-  Sketch insertions: " << hybrid_manager.num_sketch_insertions() << std::endl;
+                std::cout << "-  Sketch deletions: " << hybrid_manager.num_sketch_deletions() << std::endl;
                 std::cout << "-  Sketched edges: " << hybrid_manager.num_sketched_edges() << std::endl;
                 double percent_sketched = 100.0 * ((double)hybrid_manager.num_sketched_edges()) / ((double)hybrid_manager.total_edges());
                 std::cout << "-  Percent sketched edges: " << percent_sketched << "%" << std::endl;
-                // std::cout << "-  Direct sketched edges: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
-                double percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.total_edges());
-                std::cout << "-  Percent direct sketched edges: " << percent_direct << "%" << std::endl;
+                // std::cout << "-  Direct sketch inserts: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
+                double percent_direct = 0.0;
+                if (hybrid_manager.num_sketch_insertions() > 0) {
+                    percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.num_sketch_insertions());
+                }
+                std::cout << "-  Percent direct sketch inserts (of sketch insertions): " << percent_direct << "%" << std::endl;
             }
         }
         hybrid_manager.force_sync();
@@ -393,12 +398,17 @@ TEST(GraphTierSuite, hybrid_memory_test) {
                 std::cout << "-  Space usage of Sketches: " << hybrid_manager.space_usage_conn_sketch()/(1024*1024) << " MB" << std::endl;
                 std::cout << "-  Space usage of Recovery Sketches: " << hybrid_manager.space_usage_recovery_sketch()/(1024*1024) << " MB" << std::endl;
                 std::cout << "-  Total edges: " << hybrid_manager.total_edges() << std::endl;
+                std::cout << "-  Sketch insertions: " << hybrid_manager.num_sketch_insertions() << std::endl;
+                std::cout << "-  Sketch deletions: " << hybrid_manager.num_sketch_deletions() << std::endl;
                 std::cout << "-  Sketched edges: " << hybrid_manager.num_sketched_edges() << std::endl;
                 double percent_sketched = 100.0 * ((double)hybrid_manager.num_sketched_edges()) / ((double)hybrid_manager.total_edges());
                 std::cout << "-  Percent sketched edges: " << percent_sketched << "%" << std::endl;
-                std::cout << "-  Direct sketched edges: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
-                double percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.total_edges());
-                std::cout << "-  Percent direct sketched edges: " << percent_direct << "%" << std::endl;
+                std::cout << "-  Direct sketch inserts: " << hybrid_manager.num_direct_sketch_edges() << std::endl;
+                double percent_direct = 0.0;
+                if (hybrid_manager.num_sketch_insertions() > 0) {
+                    percent_direct = 100.0 * ((double)hybrid_manager.num_direct_sketch_edges()) / ((double)hybrid_manager.num_sketch_insertions());
+                }
+                std::cout << "-  Percent direct sketch inserts (of sketch insertions): " << percent_direct << "%" << std::endl;
             }
             }
         }

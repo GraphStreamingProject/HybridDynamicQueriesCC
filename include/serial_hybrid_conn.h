@@ -47,15 +47,14 @@ class SerialConnectivityManager {
         std::vector<uint32_t> num_cf_edges;
 
         size_t total_num_edges = 0;
-        size_t total_sketched_edges = 0;
-        size_t total_direct_sketch_edges = 0;
+        size_t total_sketch_insertions = 0;
+        size_t total_sketch_deletions = 0;
+        size_t total_direct_sketch_inserts = 0;
+        bool pending_connectivity_work = false;
         
         // buffer for when we need to collect all neighbors
         std::vector<node_id_t> _neighbors_buffer;
         
-        // non-tree deletion buffer
-        std::vector<edge_id_t> non_tree_deletion_buffer;
-
         // TODO - this might be replaced by something internal to modified-cupcake
         // can also just be a vector probably
         absl::flat_hash_set<node_id_t> _is_vertex_sketched;
@@ -89,7 +88,7 @@ class SerialConnectivityManager {
             auto edge_id = concat_pairing_fn(u, v);
             recovery_sketches[u]->update(edge_id);
             recovery_sketches[v]->update(edge_id);
-            total_sketched_edges++;
+            total_sketch_insertions++;
         }
         inline void delete_from_sketch(node_id_t u, node_id_t v) {
             node_id_t src = std::min(u, v);
@@ -98,7 +97,7 @@ class SerialConnectivityManager {
             auto edge_id = concat_pairing_fn(u, v);
             recovery_sketches[u]->update(edge_id);
             recovery_sketches[v]->update(edge_id);
-            total_sketched_edges--;
+            total_sketch_deletions++;
         }
         
         bool is_forest_edge_from_sketch(Edge edge) {
@@ -186,16 +185,30 @@ class SerialConnectivityManager {
             // TODO - maybe get rid of this line, but rn we need it for correctness potentially:
             // sketching_algo.process_all_updates();
             for (auto &update: sketching_algo.get_transaction_log()) {
+                edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                 if (update.type == DELETE) {
                     remove_from_cf(update.edge.src, update.edge.dst);
-                    edges_from_sketch.erase(concat_pairing_fn(update.edge.src, update.edge.dst));
+                    edges_from_sketch.erase(edge_id);
                 }
                 else {
                     insert_to_cf(update.edge.src, update.edge.dst);
-                    edges_from_sketch.insert(concat_pairing_fn(update.edge.src, update.edge.dst));
+                    edges_from_sketch.insert(edge_id);
                 }
             }
             sketching_algo.flush_transaction_log();
+        }
+
+        inline void apply_connectivity_sync_barrier() {
+            sketching_algo.process_all_updates();
+            flush_transaction_log();
+            pending_connectivity_work = false;
+        }
+
+        inline void sync_connectivity_if_needed() {
+            if (!pending_connectivity_work) {
+                return;
+            }
+            apply_connectivity_sync_barrier();
         }
 
     public:
@@ -247,6 +260,10 @@ class SerialConnectivityManager {
                     insert_to_sketch(vertex_to_flush, neighbor);
                 }
             }
+            if (!_neighbors_buffer.empty()) {
+                // CF edges were removed and replacement sketch-forest commits are pending.
+                pending_connectivity_work = true;
+            }
             // clear pending_num_dense_edges for this vertex
             num_pending_dense_edges[vertex_to_flush] = 0;
             // apply the transaction log
@@ -295,7 +312,7 @@ class SerialConnectivityManager {
             for (vec_t &vec: recovery_attempt.recovered_indices) {
                 Edge edge = inv_concat_pairing_fn(vec);
                 sketching_algo.update(GraphUpdate{edge, DELETE});
-                total_sketched_edges--;
+                total_sketch_deletions++;
             }
             // before we flush the transaction log - uninitialize
             // this has to happen here by current designs, since we only want to decrement
@@ -353,7 +370,7 @@ class SerialConnectivityManager {
                 if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                     if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
                         // std::cout << "Inserting edge from sketching algo: " <<  update.edge.src << ", "<< update.edge.dst << std::endl;
-                        total_direct_sketch_edges++;
+                        total_direct_sketch_inserts++;
                         insert_to_sketch(update.edge.src, update.edge.dst);
                         return;
                     }
@@ -423,9 +440,10 @@ class SerialConnectivityManager {
                         // case a)
                         // deleting from sketching algo
                         delete_from_sketch(update.edge.src, update.edge.dst);
-                        // TODO - can we be lazier about this?
-                        sketching_algo.process_all_updates();                    
-                        flush_transaction_log();
+                        
+                        // Flag for sync on query, avoiding an immediate hard barrier here.
+                        pending_connectivity_work = true;
+                        
                         check_and_perform_recovery(update.edge.src);
                         check_and_perform_recovery(update.edge.dst);
                         // can we do defered work: yes
@@ -452,27 +470,8 @@ class SerialConnectivityManager {
                 // 2) edge does not exist in the CF:
                 //  * it must be in the sketch algo, so update the sketch algo and apply transaction log.
                 else {
-                    // we can buffer this deletion as long as:
-                    // 1) we know the edge does not disconnect two components
-
-                    // non_tree_deletion_buffer.push_back(concat_pairing_fn(update.edge.src, update.edge.dst));
-                    if (non_tree_deletion_buffer.size() >= 100) {
-                        // std::cout << "Flushing non-tree deletion buffer of size: " << non_tree_deletion_buffer.size() << std::endl;
-                        for (edge_id_t edge_id: non_tree_deletion_buffer) {
-                            Edge edge = inv_concat_pairing_fn(edge_id);
-                            delete_from_sketch(edge.src, edge.dst);
-                            check_and_perform_recovery(edge.src);
-                            check_and_perform_recovery(edge.dst);
-                        }
-                        non_tree_deletion_buffer.clear();
-                        flush_transaction_log();
-                    }
-                    // sketching_algo.update(update);
-                    // delete_from_sketch(update.edge.src, update.edge.dst);
-                    // TODO - verify that we don't need to flush transaction log
-                    // flush_transaction_log();
-                    // check_and_perform_recovery(update.edge.src);
-                    // check_and_perform_recovery(update.edge.dst);
+                    // Sketch-only deletions can be sent directly; backend batching handles deferral.
+                    delete_from_sketch(update.edge.src, update.edge.dst);
                 }
                 // TODO - eventually implement a check to see if we need to remove
                 // one of the vertices from the sketch algo and dump the edges out.
@@ -480,19 +479,16 @@ class SerialConnectivityManager {
         }
 
         bool connectivity_query(node_id_t a, node_id_t b) {
-            sketching_algo.process_all_updates();
-            flush_transaction_log();
+            sync_connectivity_if_needed();
             return cf_algo.is_connected(a, b);
         }
 
         void force_sync() {
-            sketching_algo.process_all_updates();
-            flush_transaction_log();
+            apply_connectivity_sync_barrier();
         }
         
         std::vector<std::set<node_id_t>> cc_query() {
-            sketching_algo.process_all_updates();
-            flush_transaction_log();
+            sync_connectivity_if_needed();
             // TODO - this aint great.
             std::vector<std::set<node_id_t>> ret;
             std::unordered_map<uint64_t, std::set<node_id_t>> component_map;
@@ -518,14 +514,27 @@ class SerialConnectivityManager {
         size_t total_edges() const {
             return total_num_edges;
         }
+        size_t num_sketch_insertions() const {
+            return total_sketch_insertions;
+        }
+        size_t num_sketch_deletions() const {
+            return total_sketch_deletions;
+        }
         size_t num_sketched_edges() const {
-            return total_sketched_edges;
+            return (total_sketch_insertions >= total_sketch_deletions)
+                ? (total_sketch_insertions - total_sketch_deletions)
+                : 0;
+        }
+        size_t num_direct_sketch_inserts() const {
+            return total_direct_sketch_inserts;
         }
         size_t num_direct_sketch_edges() const {
-            return total_direct_sketch_edges;
+            // Backward-compatible alias; this is cumulative direct sketch inserts.
+            return num_direct_sketch_inserts();
         }
 
         void end() {
+            force_sync();
             sketching_algo.end();
         }
         
@@ -534,6 +543,7 @@ class SerialConnectivityManager {
         }
         
         HybridSpaceReport report_space_usage() {
+            force_sync();
             HybridSpaceReport report;
             report.cf_space_bytes = get_space_usage_cf();
             report.driver_space_bytes = get_space_usage_driver();
@@ -542,8 +552,10 @@ class SerialConnectivityManager {
 
             report.total_num_edges = total_edges();
             report.num_sketched_vertices = num_sketched_vertices();
+            report.num_sketch_insertions = num_sketch_insertions();
+            report.num_sketch_deletions = num_sketch_deletions();
             report.num_sketched_edges = num_sketched_edges();
-            report.num_direct_sketch_edges = num_direct_sketch_edges();
+            report.num_direct_sketch_inserts = num_direct_sketch_inserts();
             return report;
         }
         size_t get_space_usage_driver() {
@@ -555,7 +567,6 @@ class SerialConnectivityManager {
             total += num_cf_edges.capacity() * sizeof(uint32_t);
             
             total += _neighbors_buffer.capacity() * sizeof(node_id_t);
-            total += non_tree_deletion_buffer.capacity() * sizeof(edge_id_t);
             
             total += _is_vertex_sketched.bucket_count() * sizeof(node_id_t);
             total += edges_from_sketch.bucket_count() * sizeof(edge_id_t);

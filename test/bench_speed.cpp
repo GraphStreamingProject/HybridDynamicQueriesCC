@@ -208,7 +208,7 @@ struct IntervalRecord {
     long interval_ms;    // wall-clock ms for this interval
     long num_edges = 0;  
     size_t sketched_edges = 0;
-    size_t direct_sketch_edges = 0;
+    size_t direct_sketch_inserts = 0;
 };
 
 static std::string intervals_path_from(const std::string& output_path) {
@@ -223,11 +223,11 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
                                 const std::vector<IntervalRecord>& records) {
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     std::ofstream out(path);
-    out << "stream\tconfig\top_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges"
+  out << "stream\tconfig\ttop_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges";
 #if IS_HYBRID
-        << "\tsketched_edges\tdirect_sketch_edges"
+    out << "\tsketched_edges\tdirect_sketch_inserts";
 #endif
-        << "\n";
+  out << "\n";
     for (const auto& r : records) {
         double ups = (r.interval_ms > 0)
             ? (static_cast<double>(r.num_updates) / r.interval_ms * 1000.0) : 0;
@@ -235,7 +235,7 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
             << r.op_index << "\t" << r.num_updates << "\t"
             << r.interval_ms << "\t" << static_cast<long>(ups) << "\t" << r.num_edges;
 #if IS_HYBRID
-        out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_edges;
+  out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_inserts;
 #endif
         out << "\n";
     }
@@ -243,11 +243,11 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
 
 static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                             long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                            long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_edges = 0) {
+                            long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0) {
     out << "stream\tconfig\tnum_nodes\ttotal_ops\tupdate_time_ms\tquery_time_ms\t"
            "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges"
 #if IS_HYBRID
-           "\tsketched_edges\tdirect_sketch_edges"
+           "\tsketched_edges\tdirect_sketch_inserts"
 #endif
            "\n";
     long update_ms = update_time_us / 1000;
@@ -261,14 +261,14 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
         << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
         << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges;
 #if IS_HYBRID
-    out << "\t" << sketched_edges << "\t" << direct_sketch_edges;
+  out << "\t" << sketched_edges << "\t" << direct_sketch_inserts;
 #endif
     out << "\n";
 }
 
 static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                                long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                               long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_edges = 0) {
+                               long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0) {
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
     long est_updates = static_cast<long>(0.9 * total_ops);
@@ -292,7 +292,7 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
         << std::setw(w) << "Num Edges" << ": " << num_edges << "\n";
 #if IS_HYBRID
     out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
-        << std::setw(w) << "Direct Sketch Edges" << ": " << direct_sketch_edges << "\n";
+      << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n";
 #endif
     out << std::string(50, '=') << std::endl;
 }

@@ -323,12 +323,19 @@ private:
     std::vector<uint32_t> num_cf_edges;
 
     size_t total_num_edges = 0;
-    size_t total_sketched_edges = 0;
-    size_t total_direct_sketch_edges = 0;
+    size_t total_sketch_insertions = 0;
+    size_t total_sketch_deletions = 0;
+    size_t total_direct_sketch_inserts = 0;
     bool pending_connectivity_work = false;
 
+    // Periodic checkpointing: cap how stale sketch-origin bookkeeping can get
+    // without forcing frequent hard barriers on the hot path.
+    static constexpr uint64_t PERIODIC_SYNC_UPDATE_PERIOD = 50000;
+    static constexpr uint64_t SKETCH_BACKLOG_WATERMARK = 4096;
+    uint64_t updates_since_checkpoint = 0;
+    uint64_t last_flushed_sketch_seq = 0;
+
     std::vector<node_id_t> _neighbors_buffer;
-    std::vector<edge_id_t> non_tree_deletion_buffer;
     absl::flat_hash_set<node_id_t> _is_vertex_sketched;
 
     uint64_t next_seq_num() {
@@ -363,7 +370,7 @@ private:
 
         sketch_subsystem.enqueue(SketchCommand{seq, SketchCommand::Type::EDGE_UPDATE, GraphUpdate{Edge{src, dst}, INSERT}, 0});
         recovery_subsystem.enqueue(RecoveryCommand{seq, RecoveryCommand::Type::EDGE_UPDATE, concat_pairing_fn(src, dst), 0});
-        total_sketched_edges++;
+        total_sketch_insertions++;
     }
 
     inline void enqueue_delete_from_sketch(node_id_t u, node_id_t v) {
@@ -373,7 +380,7 @@ private:
 
         sketch_subsystem.enqueue(SketchCommand{seq, SketchCommand::Type::EDGE_UPDATE, GraphUpdate{Edge{src, dst}, DELETE}, 0});
         recovery_subsystem.enqueue(RecoveryCommand{seq, RecoveryCommand::Type::EDGE_UPDATE, concat_pairing_fn(src, dst), 0});
-        total_sketched_edges--;
+        total_sketch_deletions++;
     }
 
     void sync_queues() {
@@ -382,14 +389,54 @@ private:
         recovery_subsystem.sync_to(target_seq);
     }
 
+    inline void apply_connectivity_sync_barrier() {
+        uint64_t target_seq = current_seq_num.load();
+        sketch_subsystem.sync_to(target_seq);
+        flush_transaction_log();
+        last_flushed_sketch_seq = sketch_subsystem.processed_seq();
+        pending_connectivity_work = false;
+    }
+
     void sync_sketch_connectivity_if_needed() {
         if (!pending_connectivity_work) {
             return;
         }
-        uint64_t target_seq = current_seq_num.load();
-        sketch_subsystem.sync_to(target_seq);
+        apply_connectivity_sync_barrier();
+    }
+
+    inline uint64_t sketch_backlog_size() const {
+        uint64_t issued = current_seq_num.load();
+        uint64_t processed = sketch_subsystem.processed_seq();
+        return (issued >= processed) ? (issued - processed) : 0;
+    }
+
+    inline bool has_unflushed_sketch_commits() const {
+        return sketch_subsystem.processed_seq() != last_flushed_sketch_seq;
+    }
+
+    void drain_committed_sketch_updates_if_any() {
+        if (!has_unflushed_sketch_commits()) {
+            return;
+        }
+        uint64_t processed_seq = sketch_subsystem.processed_seq();
         flush_transaction_log();
-        pending_connectivity_work = false;
+        last_flushed_sketch_seq = processed_seq;
+    }
+
+    void run_periodic_sync_checkpoint() {
+        updates_since_checkpoint++;
+        if (updates_since_checkpoint < PERIODIC_SYNC_UPDATE_PERIOD) {
+            return;
+        }
+        updates_since_checkpoint = 0;
+
+        if (pending_connectivity_work || sketch_backlog_size() >= SKETCH_BACKLOG_WATERMARK) {
+            apply_connectivity_sync_barrier();
+            return;
+        }
+
+        // Otherwise just opportunistically apply any already-committed sketch updates.
+        drain_committed_sketch_updates_if_any();
     }
 
     bool is_forest_edge_from_sketch(Edge edge) {
@@ -440,12 +487,13 @@ private:
     void flush_transaction_log() {
         GraphUpdate update;
         while (sketch_subsystem.try_pop_commit(update)) {
+            edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
             if (update.type == DELETE) {
                 remove_from_cf(update.edge.src, update.edge.dst);
-                edges_from_sketch.erase(concat_pairing_fn(update.edge.src, update.edge.dst));
+                edges_from_sketch.erase(edge_id);
             } else {
                 insert_to_cf(update.edge.src, update.edge.dst);
-                edges_from_sketch.insert(concat_pairing_fn(update.edge.src, update.edge.dst));
+                edges_from_sketch.insert(edge_id);
             }
         }
     }
@@ -515,8 +563,7 @@ public:
     }
 
     void update(GraphUpdate update) {
-        // Keep sketch-origin edge bookkeeping reasonably fresh without stalling updates.
-        flush_transaction_log();
+        run_periodic_sync_checkpoint();
 
         if (update.edge.src == update.edge.dst) {
             std::cout << "WARNING: self-loop detected on vertex " << update.edge.src << std::endl;
@@ -533,10 +580,7 @@ public:
 
             if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                 if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
-                    // TODO - this isn't ever gonna be delete-aware.
-                    // the best way to track this is probably have a 
-                    // total skethc insertions variable specifically.
-                    total_direct_sketch_edges++;
+                    total_direct_sketch_inserts++;
                     enqueue_insert_to_sketch(update.edge.src, update.edge.dst);
                     return;
                 }
@@ -567,6 +611,9 @@ public:
                 flush_edges_to_sketch(update.edge.src);
             }
         } else if (update.type == DELETE) {
+            // Delete classification depends on fresh sketch-origin provenance.
+            drain_committed_sketch_updates_if_any();
+
             num_edges[update.edge.src]--;
             num_edges[update.edge.dst]--;
             total_num_edges--;
@@ -575,7 +622,7 @@ public:
                 edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                 if (edges_from_sketch.find(edge_id) != edges_from_sketch.end()) {
                     enqueue_delete_from_sketch(update.edge.src, update.edge.dst);
-                    pending_connectivity_work = true;
+                    apply_connectivity_sync_barrier();
                     check_and_perform_recovery(update.edge.src);
                     check_and_perform_recovery(update.edge.dst);
                 } else {
@@ -590,7 +637,6 @@ public:
             } else {
                 // Non-tree edges live only in the sketch path, so delete them immediately.
                 enqueue_delete_from_sketch(update.edge.src, update.edge.dst);
-                pending_connectivity_work = true;
                 check_and_perform_recovery(update.edge.src);
                 check_and_perform_recovery(update.edge.dst);
             }
@@ -606,26 +652,21 @@ public:
     }
 
     bool connectivity_query(node_id_t a, node_id_t b) {
-        if (pending_connectivity_work) {
-            // Connectivity may still depend on sketch-origin commits.
-            sync_queues();
-            flush_transaction_log();
-            pending_connectivity_work = false;
-        }
+        // Connectivity only depends on sketch commits when flagged.
+        sync_sketch_connectivity_if_needed();
         return cf_algo.is_connected(a, b);
     }
 
     void force_sync() {
         sync_queues();
         flush_transaction_log();
+        last_flushed_sketch_seq = sketch_subsystem.processed_seq();
+        pending_connectivity_work = false;
+        updates_since_checkpoint = 0;
     }
 
     std::vector<std::set<node_id_t>> cc_query() {
-        if (pending_connectivity_work) {
-            sync_queues();
-            flush_transaction_log();
-            pending_connectivity_work = false;
-        }
+        sync_sketch_connectivity_if_needed();
         std::vector<std::set<node_id_t>> ret;
         std::unordered_map<uint64_t, std::set<node_id_t>> component_map;
         for (node_id_t i = 0; i < num_nodes; i++) {
@@ -651,12 +692,27 @@ public:
         return total_num_edges;
     }
 
+    size_t num_sketch_insertions() const {
+        return total_sketch_insertions;
+    }
+
+    size_t num_sketch_deletions() const {
+        return total_sketch_deletions;
+    }
+
     size_t num_sketched_edges() const {
-        return total_sketched_edges;
+        return (total_sketch_insertions >= total_sketch_deletions)
+            ? (total_sketch_insertions - total_sketch_deletions)
+            : 0;
+    }
+
+    size_t num_direct_sketch_inserts() const {
+        return total_direct_sketch_inserts;
     }
 
     size_t num_direct_sketch_edges() const {
-        return total_direct_sketch_edges;
+        // Backward-compatible alias; this is cumulative direct sketch inserts.
+        return num_direct_sketch_inserts();
     }
 
     void end() {
@@ -683,8 +739,10 @@ public:
 
         report.total_num_edges = total_edges();
         report.num_sketched_vertices = num_sketched_vertices();
+        report.num_sketch_insertions = num_sketch_insertions();
+        report.num_sketch_deletions = num_sketch_deletions();
         report.num_sketched_edges = num_sketched_edges();
-        report.num_direct_sketch_edges = num_direct_sketch_edges();
+        report.num_direct_sketch_inserts = num_direct_sketch_inserts();
         return report;
     }
 
@@ -696,7 +754,6 @@ public:
         total += num_cf_edges.capacity() * sizeof(uint32_t);
 
         total += _neighbors_buffer.capacity() * sizeof(node_id_t);
-        total += non_tree_deletion_buffer.capacity() * sizeof(edge_id_t);
 
         total += _is_vertex_sketched.bucket_count() * sizeof(node_id_t);
         total += edges_from_sketch.bucket_count() * sizeof(edge_id_t);

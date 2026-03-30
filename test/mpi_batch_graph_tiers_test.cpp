@@ -15,8 +15,8 @@
 const int DEFAULT_BATCH_SIZE = 16834;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
-using BatchTierNodeSystem = BatchTierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
-// using BatchTierNodeSystem = BatchTierNode<EulerTourTree<DefaultSketchColumn>>;
+// using BatchTierNodeSystem = BatchTierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
+using BatchTierNodeSystem = BatchTierNode<EulerTourTree<DefaultSketchColumn>>;
 // using BatchTierNodeSystem = BatchTierNode<ufo::CutsetUFOTree<
 
 TEST(BatchGraphTierSuite, mpi_batch_mini_correctness_test) {
