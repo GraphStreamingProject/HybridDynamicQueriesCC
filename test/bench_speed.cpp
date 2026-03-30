@@ -209,6 +209,7 @@ struct IntervalRecord {
     long num_edges = 0;  
     size_t sketched_edges = 0;
     size_t direct_sketch_inserts = 0;
+    size_t sketched_vertices = 0;
 };
 
 static std::string intervals_path_from(const std::string& output_path) {
@@ -225,7 +226,7 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
     std::ofstream out(path);
   out << "stream\tconfig\ttop_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges";
 #if IS_HYBRID
-    out << "\tsketched_edges\tdirect_sketch_inserts";
+    out << "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices";
 #endif
   out << "\n";
     for (const auto& r : records) {
@@ -235,7 +236,7 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
             << r.op_index << "\t" << r.num_updates << "\t"
             << r.interval_ms << "\t" << static_cast<long>(ups) << "\t" << r.num_edges;
 #if IS_HYBRID
-  out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_inserts;
+  out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_inserts << "\t" << r.sketched_vertices;
 #endif
         out << "\n";
     }
@@ -243,11 +244,11 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
 
 static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                             long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                            long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0) {
+                            long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     out << "stream\tconfig\tnum_nodes\ttotal_ops\tupdate_time_ms\tquery_time_ms\t"
            "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges"
 #if IS_HYBRID
-           "\tsketched_edges\tdirect_sketch_inserts"
+           "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
 #endif
            "\n";
     long update_ms = update_time_us / 1000;
@@ -261,14 +262,14 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
         << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
         << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges;
 #if IS_HYBRID
-  out << "\t" << sketched_edges << "\t" << direct_sketch_inserts;
+  out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
 #endif
     out << "\n";
 }
 
 static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                                long total_ops, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                               long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0) {
+                               long num_edges = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
     long est_updates = static_cast<long>(0.9 * total_ops);
@@ -292,7 +293,8 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
         << std::setw(w) << "Num Edges" << ": " << num_edges << "\n";
 #if IS_HYBRID
     out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
-      << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n";
+      << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n"
+      << std::setw(w) << "Sketched Vertices" << ": " << sketched_vertices << "\n";
 #endif
     out << std::string(50, '=') << std::endl;
 }
@@ -301,16 +303,26 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
 
 static void write_static_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                                    long edgecount, long ins_time_us, long q_time_us, long del_time_us,
-                                   int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
-    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers\n";
+                                   int actual_batch_size, double actual_height_factor, int actual_num_tiers,
+                                   size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
+    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers"
+#if IS_HYBRID
+           "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
+#endif
+           "\n";
     out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << edgecount << "\t" << cfg.num_queries << "\t"
         << (ins_time_us/1000) << "\t" << (q_time_us/1000) << "\t" << (del_time_us/1000) << "\t"
-        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\n";
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers;
+#if IS_HYBRID
+    out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
+#endif
+    out << "\n";
 }
 
 static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                                       long edgecount, long ins_time_us, long q_time_us, long del_time_us,
-                                      int actual_batch_size, double actual_height_factor, int actual_num_tiers) {
+                                      int actual_batch_size, double actual_height_factor, int actual_num_tiers,
+                                      size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     int w = 24;
     out << "\n" << std::string(50, '=') << "\n Benchmark Static Graph Results\n" << std::string(50, '=') << "\n"
         << std::left << std::setw(w) << "Graph File" << ": " << basename_of(cfg.stream_path) << "\n"
@@ -325,8 +337,13 @@ static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg,
     }
     out << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
-        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
-        << std::string(50, '=') << std::endl;
+        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n";
+#if IS_HYBRID
+    out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
+        << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n"
+        << std::setw(w) << "Sketched Vertices" << ": " << sketched_vertices << "\n";
+#endif
+    out << std::string(50, '=') << std::endl;
 }
 
 // ========== Main ==========
@@ -476,12 +493,13 @@ int main(int argc, char** argv) {
                   #if IS_HYBRID
                     size_t ise = system.num_sketched_edges();
                     size_t idse = system.num_direct_sketch_edges();
-                    std::cout << "  sketched=" << ise << " direct=" << idse;
+                    size_t isv = system.num_sketched_vertices();
+                    std::cout << "  sketched=" << ise << " direct=" << idse << " sketched_verts=" << isv;
                   #else
-                    size_t ise = 0, idse = 0;
+                    size_t ise = 0, idse = 0, isv = 0;
                   #endif
                     std::cout << std::endl;
-                    interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse});
+                    interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse, isv});
                     updates_since_report = 0;
                     interval_timer = now;
                 }
@@ -497,16 +515,17 @@ int main(int argc, char** argv) {
       #if IS_HYBRID
         size_t se = system.num_sketched_edges();
         size_t dse = system.num_direct_sketch_edges();
+        size_t sv = system.num_sketched_vertices();
       #else
-        size_t se = 0, dse = 0;
+        size_t se = 0, dse = 0, sv = 0;
       #endif
 
         if (cfg.output_path.empty()) {
-            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
         } else {
             std::ofstream out(cfg.output_path);
-            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
-            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+            write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
+            write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
             if (!interval_records.empty()) {
                 write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
             }
@@ -641,12 +660,13 @@ int main(int argc, char** argv) {
                       #if IS_HYBRID
                         size_t ise = system.num_sketched_edges();
                         size_t idse = system.num_direct_sketch_edges();
-                        std::cout << "  sketched=" << ise << " direct=" << idse;
+                        size_t isv = system.num_sketched_vertices();
+                        std::cout << "  sketched=" << ise << " direct=" << idse << " sketched_verts=" << isv;
                       #else
-                        size_t ise = 0, idse = 0;
+                        size_t ise = 0, idse = 0, isv = 0;
                       #endif
                         std::cout << std::endl;
-                        interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse});
+                        interval_records.push_back({i, updates_since_report, interval_ms, current_num_edges, ise, idse, isv});
                         updates_since_report = 0;
                         interval_timer = now;
                     }
@@ -662,16 +682,17 @@ int main(int argc, char** argv) {
           #if IS_HYBRID
             size_t se = system.num_sketched_edges();
             size_t dse = system.num_direct_sketch_edges();
+            size_t sv = system.num_sketched_vertices();
           #else
-            size_t se = 0, dse = 0;
+            size_t se = 0, dse = 0, sv = 0;
           #endif
 
             if (cfg.output_path.empty()) {
-                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
             } else {
                 std::ofstream out(cfg.output_path);
-                write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
-                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse);
+                write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
+                write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, se, dse, sv);
                 if (!interval_records.empty()) {
                     write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
                 }
