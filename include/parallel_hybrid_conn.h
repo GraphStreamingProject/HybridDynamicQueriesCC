@@ -125,7 +125,7 @@ private:
                     // vertex before removing it from the query structures.
                     // TODO - there should be a better way 
                     sketching_algo.process_all_updates();
-                    sketching_algo.uninitialize_node(cmd.node);
+                    // sketching_algo.uninitialize_node(cmd.node);
                     break;
                 case SketchCommand::Type::RECLAIM_VERTEX:
                     // Sketch-side reclaim is currently equivalent to deactivation.
@@ -640,13 +640,9 @@ public:
                 check_and_perform_recovery(update.edge.dst);
             }
 
-            // Cleanup sketches if they are no longer dense
-            if (is_vertex_sketched(update.edge.src) && num_edges[update.edge.src] < DENSE_THRESHOLD / 2) {
-                uninitialize_vertex_sketch(update.edge.src);
-            }
-            if (is_vertex_sketched(update.edge.dst) && num_edges[update.edge.dst] < DENSE_THRESHOLD / 2) {
-                uninitialize_vertex_sketch(update.edge.dst);
-            }
+            // TODO - implement check_and_perform_recovery
+            // needs somehow be communicated between the two threads, so
+            // isn't entirely ready quite yet.
         }
     }
 
