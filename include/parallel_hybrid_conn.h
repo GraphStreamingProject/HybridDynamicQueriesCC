@@ -121,6 +121,10 @@ private:
                     sketching_algo.initialize_node(cmd.node);
                     break;
                 case SketchCommand::Type::DEACTIVATE_VERTEX:
+                    // Flush any buffered edge updates that may reference this
+                    // vertex before removing it from the query structures.
+                    // TODO - there should be a better way 
+                    sketching_algo.process_all_updates();
                     sketching_algo.uninitialize_node(cmd.node);
                     break;
                 case SketchCommand::Type::RECLAIM_VERTEX:
