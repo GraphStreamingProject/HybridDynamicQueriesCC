@@ -328,10 +328,8 @@ private:
     size_t total_direct_sketch_inserts = 0;
     bool pending_connectivity_work = false;
 
-    // Periodic checkpointing: cap how stale sketch-origin bookkeeping can get
-    // without forcing frequent hard barriers on the hot path.
     static constexpr uint64_t PERIODIC_SYNC_UPDATE_PERIOD = 50000;
-    static constexpr uint64_t SKETCH_BACKLOG_WATERMARK = 4096;
+    static constexpr uint64_t SKETCH_BACKLOG_WATERMARK = 1048576;
     uint64_t updates_since_checkpoint = 0;
     uint64_t last_flushed_sketch_seq = 0;
 
@@ -611,9 +609,6 @@ public:
                 flush_edges_to_sketch(update.edge.src);
             }
         } else if (update.type == DELETE) {
-            // Delete classification depends on fresh sketch-origin provenance.
-            drain_committed_sketch_updates_if_any();
-
             num_edges[update.edge.src]--;
             num_edges[update.edge.dst]--;
             total_num_edges--;
@@ -622,7 +617,7 @@ public:
                 edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
                 if (edges_from_sketch.find(edge_id) != edges_from_sketch.end()) {
                     enqueue_delete_from_sketch(update.edge.src, update.edge.dst);
-                    apply_connectivity_sync_barrier();
+                    pending_connectivity_work = true;
                     check_and_perform_recovery(update.edge.src);
                     check_and_perform_recovery(update.edge.dst);
                 } else {
