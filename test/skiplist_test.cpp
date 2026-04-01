@@ -7,11 +7,12 @@
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool SkipListNode<SketchClass>::isvalid() {
 	bool valid = true;
-	if (this->up && this->up->down != this) valid = false;
-	if (this->down && this->down->up != this) valid = false;
+    SkipListNode<SketchClass>* up = this->get_up_link();
+    if (up && up->down != this) valid = false;
+    if (this->down && this->down->get_up_link() && this->down->get_up_link() != this) valid = false;
 	if (this->left && this->left->right != this) valid = false;
 	if (this->right && this->right->left != this) valid = false;
-    if (this->up && !this->up->isvalid()) valid = false;
+    if (up && !up->isvalid()) valid = false;
     if (!this->get_parent() && this->right) valid = false;
 	return valid;
 }
@@ -26,7 +27,7 @@ int SkipListNode<SketchClass>::print_list() {
         SkipListNode* currcurr = curr;
         while (currcurr) {
             std::cout << "O";
-            currcurr = currcurr->up;
+			currcurr = currcurr->get_up_link();
         }
         std::cout << std::endl;
         curr = curr->right;

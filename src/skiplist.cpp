@@ -35,13 +35,13 @@ void SkipListNode<SketchClass>::uninit_element(bool delete_bdry) {
 	SkipListNode* bdry_prev;
 	while (list_curr) {
 		list_prev = list_curr;
-		list_curr = list_prev->up;
+		list_curr = list_prev->get_up_link();
 		delete list_prev;
 	}
 	if (delete_bdry) {
 		while (bdry_curr) {
 			bdry_prev = bdry_curr;
-			bdry_curr = bdry_prev->up;
+			bdry_curr = bdry_prev->get_up_link();
 			delete bdry_prev;
 		}
 	}
@@ -67,13 +67,11 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::init_element(EulerTourNode
 		bdry_node->right = list_node;
 		if (list_prev) {
 			list_node->down = list_prev;
-			list_prev->up = list_node;
-			list_prev->parent = list_node;
+			list_prev->set_up_link(list_node);
 		}
 		if (bdry_prev) {
 			bdry_node->down = bdry_prev;
-			bdry_prev->up = bdry_node;
-			bdry_prev->parent = bdry_node;
+			bdry_prev->set_up_link(bdry_node);
 		}
 		list_prev = list_node;
 		bdry_prev = bdry_node;
@@ -81,9 +79,8 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::init_element(EulerTourNode
 	// Add one more boundary node at height+1
 	SkipListNode* root = new SkipListNode(nullptr, seed, true);
 	root->down = bdry_prev;
-	bdry_prev->up = root;
-	bdry_prev->parent = root;
-	list_prev->parent = root;
+	bdry_prev->set_up_link(root);
+	list_prev->set_parent_link(root);
 	root->size = 2;
 	return root->get_last();
 }
@@ -95,7 +92,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::get_parent() const {
 	// 	curr = curr->left;
 	// }
 	// return curr ? curr->up : nullptr;
-	return parent;
+	return get_parent_link();
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -335,7 +332,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 		l_prev = l_curr;
 		r_prev = r_curr;
 		l_curr = l_prev->get_parent();
-		r_curr = r_prev->up;
+		r_curr = r_prev->get_up_link();
 	}
 
 	// If left list was taller add the root agg in right to the rest in left
@@ -359,8 +356,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 		while (r_curr) {
 			l_curr = new SkipListNode(nullptr, seed, true);
 			l_curr->down = l_prev;
-			l_prev->up = l_curr;
-			l_prev->parent = l_curr;
+			l_prev->set_up_link(l_curr);
 			l_curr->right = r_curr->right;
 			if (r_curr->right) r_curr->right->left = l_curr;
 
@@ -373,19 +369,19 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::join(SkipListNode<SketchCl
 			if (r_prev) delete r_prev; // Delete old boundary nodes
 			l_prev = l_curr;
 			r_prev = r_curr;
-			r_curr = r_prev->up;
+			r_curr = r_prev->get_up_link();
 		}
 		// delete l_root_agg;
 	}
 	delete r_prev;
 	// Update parent pointers in right list
 	while (r_first) {
-		while (r_first && !r_first->up) {
-			r_first->parent = r_first->left->parent;
+		while (r_first && !r_first->get_up_link()) {
+			r_first->set_parent_link(r_first->left->get_parent());
 			r_first = r_first->right;
 		}
 		if (r_first)
-			r_first = r_first->up;
+			r_first = r_first->get_up_link();
 	}
 	// Returns the root of the joined list
 	return l_prev;
@@ -420,18 +416,17 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::split_left(SkipListNode<Sk
 		if (bdry->sketch_agg.is_initialized()) // Only if its not the bottom sketchless node
 			new_bdry->sketch_agg.merge(bdry->sketch_agg);
 		new_bdry->size = bdry->size;
-		while (r_curr && !r_curr->up) {
+		while (r_curr && !r_curr->get_up_link()) {
 			// r_curr->process_updates();
 			if (r_curr->sketch_agg.is_initialized()) // Only if that skiplist node has a sketch
 				new_bdry->sketch_agg.merge(r_curr->sketch_agg);
 			new_bdry->size += r_curr->size;
-			r_curr->parent = new_bdry;
+			r_curr->set_parent_link(new_bdry);
 			r_curr = r_curr->right;
 		}
-		r_curr = r_curr ? r_curr->up : nullptr;
+		r_curr = r_curr ? r_curr->get_up_link() : nullptr;
 		new_bdry->down = bdry;
-		bdry->up = new_bdry;
-		bdry->parent = new_bdry;
+		bdry->set_up_link(new_bdry);
 		bdry = new_bdry;
 	}
 	// Subtract the final right agg from the rest of the aggs on left path
@@ -449,8 +444,7 @@ SkipListNode<SketchClass>* SkipListNode<SketchClass>::split_left(SkipListNode<Sk
 		l_prev = l_curr;
 		l_curr = l_prev->down;
 	}
-	l_prev->up = nullptr;
-	l_prev->parent = nullptr;
+	l_prev->clear_vertical_link();
 	// Returns the root of left list
 	return l_prev;
 }

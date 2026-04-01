@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <unordered_set>
 #include <vector>
@@ -15,6 +16,18 @@ extern int command_line_n;
 extern int command_line_k;
 extern int command_line_num_trials;
 extern long command_line_seed;
+extern double height_factor;
+
+namespace {
+double benchmark_height_factor(int nodecount) {
+  if (nodecount <= 16) {
+    return 1.0;
+  }
+  const double n = static_cast<double>(nodecount);
+  const double hf = std::log(std::log(n)) / std::log(n);
+  return std::max(hf, 1e-6);
+}
+}
 
 
 TEST(CutsetSuite, cutset_memory_benchmark) {
@@ -23,9 +36,11 @@ TEST(CutsetSuite, cutset_memory_benchmark) {
   int nodecount = command_line_n == 0 ? 1000 : command_line_n;
   int n_ops = command_line_k == 0 ? 2000 : command_line_k;
   sketch_len = nodecount;
+  height_factor = benchmark_height_factor(nodecount);
   std::cout << "Running " << num_trials << " trials." << std::endl;
   std::cout << "n: " << nodecount << std::endl;
   std::cout << "n_ops: " << n_ops << std::endl;
+  std::cout << "height_factor: " << height_factor << std::endl;
 
   for (int trial = 0; trial < num_trials; ++trial) {
     int current_seed = command_line_seed == -1 ? rand() : command_line_seed;
@@ -37,6 +52,7 @@ TEST(CutsetSuite, cutset_memory_benchmark) {
     ufo::CutsetUFOTree<DefaultSketchColumn> ufo(nodecount, 1, current_seed);
     EulerTourTree<DefaultSketchColumn> ett(nodecount, 1, current_seed);
     ett.initialize_all_nodes();
+    lct.initialize_all_nodes();
 
     for (int i = 0; i < n_ops; i++) {
       int u = rand() % nodecount;
@@ -69,9 +85,11 @@ TEST(CutsetSuite, cutset_link_benchmark) {
   srand(seed);
   int nodecount = command_line_n == 0 ? 1000 : command_line_n;
   sketch_len = nodecount;
+  height_factor = benchmark_height_factor(nodecount);
 
   std::cout << "--- BENCHMARK: LINKS ---" << std::endl;
   std::cout << "Nodes: " << nodecount << std::endl;
+  std::cout << "height_factor: " << height_factor << std::endl;
 
   // Pre-generate a random spanning tree to guarantee 100% link operations
   std::vector<std::pair<int, int>> link_edges;
@@ -115,9 +133,11 @@ TEST(CutsetSuite, cutset_sketch_update_benchmark) {
   int nodecount = command_line_n == 0 ? 1000 : command_line_n;
   int n_ops = command_line_k == 0 ? 2000 : command_line_k;
   sketch_len = nodecount;
+  height_factor = benchmark_height_factor(nodecount);
 
   std::cout << "--- BENCHMARK: SKETCH UPDATES ---" << std::endl;
   std::cout << "Nodes: " << nodecount << " | Update Ops: " << n_ops << std::endl;
+  std::cout << "height_factor: " << height_factor << std::endl;
 
   cutset_lct::CutsetLCT<DefaultSketchColumn> lct(nodecount, seed);
   ufo::CutsetUFOTree<DefaultSketchColumn> ufo(nodecount, 1, seed);

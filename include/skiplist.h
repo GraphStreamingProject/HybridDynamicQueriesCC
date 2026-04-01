@@ -5,6 +5,7 @@
 #include "sketch/sketch_columns.h"
 #include "sketch_interfacing.h"
 
+#include <cstdint>
 #include <parlay/sequence.h>
 #include <tbb/tbb.h>
 
@@ -37,10 +38,41 @@ class SkipListNode {
 
   SkipListNode<SketchClass>* left = nullptr;
   SkipListNode<SketchClass>* right = nullptr;
-  SkipListNode<SketchClass>* up = nullptr;
   SkipListNode<SketchClass>* down = nullptr;
-  // Store the first node to the left on the next level up
-  SkipListNode<SketchClass>* parent = nullptr;
+  // Stores either up (tag 0) or parent (tag 1) using the low bit.
+  uintptr_t up_or_parent_tagged = 0;
+
+  static constexpr uintptr_t kParentTag = 0x1;
+
+  void set_up_link(SkipListNode<SketchClass>* up_ptr) {
+    uintptr_t raw = reinterpret_cast<uintptr_t>(up_ptr);
+    assert((raw & kParentTag) == 0);
+    up_or_parent_tagged = raw;
+  }
+
+  void set_parent_link(SkipListNode<SketchClass>* parent_ptr) {
+    uintptr_t raw = reinterpret_cast<uintptr_t>(parent_ptr);
+    assert((raw & kParentTag) == 0);
+    up_or_parent_tagged = raw == 0 ? 0 : (raw | kParentTag);
+  }
+
+  SkipListNode<SketchClass>* get_up_link() const {
+    if ((up_or_parent_tagged & kParentTag) != 0) {
+      return nullptr;
+    }
+    return reinterpret_cast<SkipListNode<SketchClass>*>(up_or_parent_tagged);
+  }
+
+  SkipListNode<SketchClass>* get_parent_link() const {
+    if (up_or_parent_tagged == 0) {
+      return nullptr;
+    }
+    return reinterpret_cast<SkipListNode<SketchClass>*>(up_or_parent_tagged & ~kParentTag);
+  }
+
+  void clear_vertical_link() {
+    up_or_parent_tagged = 0;
+  }
 
   int8_t needs_update = AggUpdateState::NORMAL;
 
@@ -129,7 +161,7 @@ public:
         return true;
       }
       current = current->right;
-    } while (current != nullptr && current != this->down && current->up == nullptr);
+    } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
     return false;
   }
 
@@ -142,7 +174,7 @@ public:
           this->sketch_agg.prefetch();
       }
       current = current->right;
-    } while (current != nullptr && current != this->down && current->up == nullptr);
+    } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
   }
 
   void _subtract_stale_children() {
@@ -161,7 +193,7 @@ public:
         current->needs_update = AggUpdateState::LEAVE_ALONE;
       }
       current = current->right;
-    } while (current != nullptr && current != this->down && current->up == nullptr);
+    } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
   }
   
   void _do_full_reagg() {
@@ -175,7 +207,7 @@ public:
         }
         current->needs_update = AggUpdateState::NORMAL;
         current = current->right;
-    } while (current != nullptr && current != this->down && current->up == nullptr);
+    } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
   }
   
   void _full_recompute_aggs_topdown(int fork_levels) {
@@ -194,7 +226,7 @@ public:
           });
         }
         current = current->right;
-      } while (current != nullptr && current != this->down && current->up == nullptr);
+      } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
       tg.wait();
       // _do_full_prefetch();
       _do_full_reagg();
@@ -204,7 +236,7 @@ public:
             if (current->needs_update == AggUpdateState::NEEDS_UPDATE) {
                 current->recompute_aggs_topdown(fork_levels - 1);
             }
-        } while (current != nullptr && current != this->down && current->up == nullptr);
+        } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
         // _do_full_prefetch();
         _do_full_reagg();
     }
@@ -224,7 +256,7 @@ public:
           });
         }
         current = current->right;
-      } while (current != nullptr && current != this->down && current->up == nullptr);
+      } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
       tg.wait();
     }
     else {
@@ -232,7 +264,7 @@ public:
         do {
             current->recompute_aggs_topdown(fork_levels - 1);
             current = current->right;
-        } while (current != nullptr && current != this->down && current->up == nullptr);
+        } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
       }
     }
   }
@@ -265,7 +297,7 @@ public:
         }
         current->needs_update = AggUpdateState::NORMAL;
         current = current->right;
-      } while (current != nullptr && current != this->down && current->up == nullptr);
+      } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
     }
     this->needs_update = AggUpdateState::NORMAL;
   }
@@ -282,7 +314,7 @@ public:
       do {
         total += current->compute_space_usage();
         current = current->right;
-      } while (current != nullptr && current != this->down && current->up == nullptr);
+      } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
     }
     return total;
   }
@@ -290,8 +322,8 @@ public:
   // we have to barrier on all of these finishing
   SkipListNode<SketchClass>* find_root_with_cas() {
     SkipListNode<SketchClass>* current = this;
-    while (current->parent != nullptr) {
-      current = current->parent;
+    while (current->get_parent() != nullptr) {
+      current = current->get_parent();
       std::atomic_ref<int8_t> atomic_needs_update(current->needs_update);
       int8_t expected = static_cast<int8_t>(AggUpdateState::NORMAL);
       bool cas_succeed =  atomic_needs_update.compare_exchange_strong(
@@ -322,7 +354,7 @@ public:
           current->clear_cas_flags();
       }
       current = current->right;
-    } while (current != nullptr && current != this->down && current->up == nullptr);
+    } while (current != nullptr && current != this->down && current->get_up_link() == nullptr);
   }
 
   std::set<EulerTourNode<SketchClass>*> get_component();

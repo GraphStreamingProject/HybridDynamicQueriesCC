@@ -162,7 +162,7 @@ SkipListNode<SketchClass>* EulerTourNode<SketchClass>::make_edge(EulerTourNode<S
     node = SkipListNode<SketchClass>::init_element(this, false);
   }
   //Add the new SkipListNode to the edge list
-  return this->edges.emplace(std::make_pair(other, node)).first->second;
+  return this->edges.emplace_or_get(other, node);
   //Returns the new node pointer or the one that already existed if it did
 }
 
@@ -178,14 +178,14 @@ SkipListNode<SketchClass>* EulerTourNode<SketchClass>::make_edge(EulerTourNode<S
     node = SkipListNode<SketchClass>::init_element(this, false);
   }
   //Add the new SkipListNode to the edge list
-  return this->edges.emplace(std::make_pair(other, node)).first->second;
+  return this->edges.emplace_or_get(other, node);
   //Returns the new node pointer or the one that already existed if it did
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 void EulerTourNode<SketchClass>::delete_edge(EulerTourNode<SketchClass>* other, SketchClass& temp_sketch) {
   assert(!other || this->tier == other->tier);
-  SkipListNode<SketchClass>* node_to_delete = this->edges[other];
+  SkipListNode<SketchClass>* node_to_delete = this->edges.get(other);
   this->edges.erase(other);
   if (node_to_delete == allowed_caller) {
     if (this->edges.empty()) {
@@ -197,7 +197,7 @@ void EulerTourNode<SketchClass>::delete_edge(EulerTourNode<SketchClass>* other, 
       // node_to_delete->sketch_agg = nullptr;
       node_to_delete->sketch_agg = SketchClass(0, seed); // We just gave the sketch to new allowed caller
     } else {
-      allowed_caller = this->edges.begin()->second;
+      allowed_caller = this->edges.any_value();
       // node_to_delete->process_updates();
       allowed_caller->update_path_agg(node_to_delete->sketch_agg);
       node_to_delete->sketch_agg = SketchClass(0, seed); // We just gave the sketch to new allowed caller
@@ -300,7 +300,7 @@ uint32_t EulerTourNode<SketchClass>::get_size() {
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool EulerTourNode<SketchClass>::has_edge_to(EulerTourNode<SketchClass>* other) {
-  return !(this->edges.find(other) == this->edges.end());
+  return this->edges.contains(other);
 }
 
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -311,12 +311,12 @@ std::set<EulerTourNode<SketchClass>*> EulerTourNode<SketchClass>::get_component(
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool EulerTourNode<SketchClass>::link(EulerTourNode<SketchClass>& other, SketchClass& temp_sketch) {
   assert(this->tier == other.tier);
-  SkipListNode<SketchClass>* this_sentinel = this->edges.begin()->second->get_last();
-  SkipListNode<SketchClass>* other_sentinel = other.edges.begin()->second->get_last();
+  SkipListNode<SketchClass>* this_sentinel = this->edges.any_value()->get_last();
+  SkipListNode<SketchClass>* other_sentinel = other.edges.any_value()->get_last();
 
   // There should always be a sentinel
-  assert(this_sentinel == this_sentinel->node->edges.at(nullptr));
-  assert(other_sentinel == other_sentinel->node->edges.at(nullptr));
+  assert(this_sentinel == this_sentinel->node->edges.get(nullptr));
+  assert(other_sentinel == other_sentinel->node->edges.get(nullptr));
 
   // If the nodes are already part of the same tree, don't link
   if (this_sentinel == other_sentinel) {
@@ -332,7 +332,7 @@ bool EulerTourNode<SketchClass>::link(EulerTourNode<SketchClass>& other, SketchC
   // ^                    ^
   // '--------------------'--- might be null
 
-  SkipListNode<SketchClass>* aux_this_right = this->edges.begin()->second;
+  SkipListNode<SketchClass>* aux_this_right = this->edges.any_value();
   SkipListNode<SketchClass>* aux_this_left = SkipListNode<SketchClass>::split_left(aux_this_right);
 
   // Unlink and destroy other_sentinel
@@ -343,7 +343,7 @@ bool EulerTourNode<SketchClass>::link(EulerTourNode<SketchClass>& other, SketchC
   if (aux_other == nullptr) {
     aux_other_right = aux_other_left = nullptr;
   } else {
-    aux_other_right = other.edges.begin()->second;
+    aux_other_right = other.edges.any_value();
     aux_other_left = SkipListNode<SketchClass>::split_left(aux_other_right);
   }
 
@@ -364,12 +364,12 @@ bool EulerTourNode<SketchClass>::link(EulerTourNode<SketchClass>& other, SketchC
 template <typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 bool EulerTourNode<SketchClass>::cut(EulerTourNode<SketchClass>& other, SketchClass& temp_sketch) {
   assert(this->tier == other.tier);
-  if (this->edges.find(&other) == this->edges.end()) {
-    assert(other.edges.find(this) == other.edges.end());
+  if (!this->edges.contains(&other)) {
+    assert(!other.edges.contains(this));
     return false;
   }
-  SkipListNode<SketchClass>* e1 = this->edges[&other];
-  SkipListNode<SketchClass>* e2 = other.edges[this];
+  SkipListNode<SketchClass>* e1 = this->edges.get(&other);
+  SkipListNode<SketchClass>* e2 = other.edges.get(this);
 
   SkipListNode<SketchClass>* frag1r = SkipListNode<SketchClass>::split_right(e1);
   bool order_is_e1e2 = e2->get_last() != e1;
