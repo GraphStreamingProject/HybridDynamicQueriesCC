@@ -12,7 +12,7 @@
 # Other flags:
 #   --list          Show available built configs
 #   --batch-size N  --height-factor F  --num-tiers N
-#   --mpi-flags "..." --hybrid-threshold N
+#   --mpi-flags "..." --hybrid-threshold N --recovery-size N
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "${SCRIPT_DIR}/bench_common.sh"
@@ -53,6 +53,8 @@ BENCH_ARGS=("$STREAM")
 [[ -n "$HEIGHT_FACTOR" ]]    && BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
 [[ -n "$NUM_TIERS" ]]        && BENCH_ARGS+=(--num-tiers "$NUM_TIERS")
 [[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
+[[ -n "$RECOVERY_SIZE" ]]    && BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
+[[ -n "$MOVE_TO_SKETCH" ]]   && BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
 BENCH_ARGS+=(--output-dir "$FINAL_OUTPUT_DIR")
 BENCH_ARGS+=(--report-interval "$REPORT_INTERVAL")
 

@@ -16,6 +16,14 @@ public:
         recovery_subsystem.set_threshold(threshold);
     }
 
+    void set_recovery_size(size_t recovery_size) {
+        recovery_subsystem.set_recovery_size(recovery_size);
+    }
+
+    void set_move_to_sketch(size_t val) {
+        MOVE_TO_SKETCH = val;
+    }
+
     node_id_t sketched_node_count() const {
         return recovery_subsystem.active_vertex_count();
     }
@@ -110,6 +118,8 @@ private:
         SpaceReport report_space_usage() {
             return sketching_algo.report_space_usage();
         }
+
+        long get_num_tree_ops() const { return sketching_algo.get_num_tree_ops(); }
 
     private:
         void apply_command(const SketchCommand& cmd) {
@@ -214,6 +224,10 @@ private:
             dense_threshold = threshold;
         }
 
+        void set_recovery_size(size_t recovery_size) {
+            recovery_size_override = recovery_size;
+        }
+
     private:
         void reclaim_retired(uint64_t watermark) {
             while (!retired_vertices.empty() && retired_vertices.front().first <= watermark) {
@@ -266,7 +280,10 @@ private:
                         break;
                     }
                     double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
-                    auto* sketch = new RecoverySketchType((size_t)num_nodes, (size_t)dense_threshold / 8, cleanup_adjustment_factor, (uint64_t)seed, false);
+                    size_t recovery_size = (recovery_size_override > 0)
+                        ? recovery_size_override
+                        : std::max<size_t>(1, dense_threshold / 8);
+                    auto* sketch = new RecoverySketchType((size_t)num_nodes, recovery_size, cleanup_adjustment_factor, (uint64_t)seed, false);
                     recovery_sketches[cmd.vertex] = sketch;
                     approx_space_usage_bytes.fetch_add(sketch->space_usage_bytes());
                     active_vertices.fetch_add(1);
@@ -296,6 +313,7 @@ private:
         node_id_t num_nodes;
         size_t seed;
         size_t dense_threshold;
+        size_t recovery_size_override = 0;
         tbb::concurrent_queue<RecoveryCommand> command_queue;
         std::thread worker;
         std::atomic<bool> running{false};
@@ -313,7 +331,7 @@ private:
     RecoverySubsystem recovery_subsystem;
 
     // TODO - this aint a great way
-    size_t MOVE_TO_SKETCH = 40;
+    size_t MOVE_TO_SKETCH = 100;
     size_t DENSE_THRESHOLD = 2000;
 
     size_t seed;
@@ -580,6 +598,7 @@ public:
             num_edges[update.edge.dst]++;
             total_num_edges++;
 
+#if defined(ENABLE_DIRECT_SKETCH) && ENABLE_DIRECT_SKETCH
             if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                 if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
                     total_direct_sketch_inserts++;
@@ -587,6 +606,7 @@ public:
                     return;
                 }
             }
+#endif
 
             insert_to_cf(update.edge.src, update.edge.dst);
 
@@ -709,6 +729,10 @@ public:
         // Backward-compatible alias; this is cumulative direct sketch inserts.
         return num_direct_sketch_inserts();
     }
+
+    // TODO - this isnt locked rn properly
+    // it should roughly be fine though?
+    long get_num_tree_ops() const { return sketch_subsystem.get_num_tree_ops(); }
 
     void end() {
         sync_queues();

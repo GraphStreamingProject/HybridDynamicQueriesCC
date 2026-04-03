@@ -40,5 +40,7 @@ public:
         report.top_level_lct_bytes = 0;
         return report;
     }
+
+    long get_num_tree_ops() const { return 0; }
 };
 

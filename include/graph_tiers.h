@@ -43,6 +43,7 @@ private:
   std::vector<ComponentView> root_nodes;
   LinkCutTreeMaxAgg<int8_t> link_cut_tree;
   SketchlessEulerTourTree<> query_ett;
+  long tree_ops_count = 0;
   void refresh(GraphUpdate update, bool did_cut);
 
 public:
@@ -100,4 +101,5 @@ public:
   }
 
   SpaceReport report_space_usage();
+  long get_num_tree_ops() const { return tree_ops_count; }
 };

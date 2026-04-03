@@ -132,6 +132,7 @@ void BatchInputNode::process_updates() {
   for (const auto& cut_msg : tree_cut_buffer) {
     link_cut_tree.cut(cut_msg.edge.src, cut_msg.edge.dst);
     query_ett.cut(cut_msg.edge.src, cut_msg.edge.dst);
+    tree_ops_count++;
     transaction_log.push_back({{cut_msg.edge.src, cut_msg.edge.dst}, DELETE});
   }
 
@@ -240,6 +241,7 @@ void BatchInputNode::process_updates() {
 
         link_cut_tree.cut(c_node, d_node);
         query_ett.cut(c_node, d_node);
+        tree_ops_count++;
         transaction_log.push_back({{c_node, d_node}, DELETE});
 
         // Link the new edge.
@@ -252,6 +254,7 @@ void BatchInputNode::process_updates() {
 
         link_cut_tree.link(a, b, first_isolated_tier + 1);
         query_ett.link(a, b);
+        tree_ops_count++;
         transaction_log.push_back({{a, b}, INSERT});
       } else {
         // No cycle: just link.
@@ -264,6 +267,7 @@ void BatchInputNode::process_updates() {
 
         link_cut_tree.link(a, b, first_isolated_tier + 1);
         query_ett.link(a, b);
+        tree_ops_count++;
         transaction_log.push_back({{a, b}, INSERT});
       }
     }

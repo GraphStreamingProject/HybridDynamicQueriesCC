@@ -301,6 +301,9 @@ function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE
     if(USE_PARALLEL_HYBRID AND USE_HYBRID)
       target_compile_definitions(${TARGET_NAME} PRIVATE USE_PARALLEL_HYBRID=1)
     endif()
+    if(ENABLE_DIRECT_SKETCH AND USE_HYBRID)
+      target_compile_definitions(${TARGET_NAME} PRIVATE ENABLE_DIRECT_SKETCH=1)
+    endif()
 
     target_include_directories(${TARGET_NAME} PUBLIC include ${MPI_C_INCLUDE_PATH})
     add_dependencies(${TARGET_NAME} GraphZeppelinVerifyCC dycon)
@@ -314,6 +317,7 @@ endfunction()
 
 # ---- Generate benchmark targets ----
 option(BENCH_ALL "Build ALL algo×cutset×sketch×hybrid benchmark configs" OFF)
+option(ENABLE_DIRECT_SKETCH "Enable the direct-to-sketch shortcut in hybrid managers" ON)
 
 if(BENCH_ALL)
   # Full matrix: 3 algos × 3 cutsets × 2 sketches × 2 hybrid = 36 configs

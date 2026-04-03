@@ -16,13 +16,20 @@ class SerialConnectivityManager {
             // TODO - do this in an aesthetically better way lol.
             DENSE_THRESHOLD = threshold;
         }
+        void set_recovery_size(size_t recovery_size) {
+            RECOVERY_SIZE_OVERRIDE = recovery_size;
+        }
+        void set_move_to_sketch(size_t val) {
+            MOVE_TO_SKETCH = val;
+        }
         node_id_t sketched_node_count() const {
             return this->recovery_sketches.size();
         }
     private:
         // TODO - this aint a great way
-        size_t MOVE_TO_SKETCH = 40;
+        size_t MOVE_TO_SKETCH = 100;
         size_t DENSE_THRESHOLD = 2000;
+        size_t RECOVERY_SIZE_OVERRIDE = 0;
         // size_t MOVE_TO_SKETCH = 1000000;
         
         size_t seed;
@@ -114,6 +121,13 @@ class SerialConnectivityManager {
         bool is_vertex_sketched(node_id_t vertex) {
             return _is_vertex_sketched.find(vertex) != _is_vertex_sketched.end();
         }
+
+        size_t recovery_size() const {
+            if (RECOVERY_SIZE_OVERRIDE > 0) {
+                return RECOVERY_SIZE_OVERRIDE;
+            }
+            return std::max<size_t>(1, DENSE_THRESHOLD / 8);
+        }
         
         void initialize_vertex_sketch(node_id_t vertex) {
             // std::cout << "Initializing sketch for vertex " << vertex << std::endl << " with neighbors count "
@@ -128,7 +142,7 @@ class SerialConnectivityManager {
             // i think 5 sample should be enough?
             double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
             // double cleanup_adjustment_factor = 1.0;
-            recovery_sketches[vertex] = new RecoverySketchType((size_t)num_nodes, (size_t)DENSE_THRESHOLD / 4, cleanup_adjustment_factor, (uint64_t)seed, false);
+            recovery_sketches[vertex] = new RecoverySketchType((size_t)num_nodes, recovery_size(), cleanup_adjustment_factor, (uint64_t)seed, false);
             
             // update your neighbors' dense edge counts
             for (auto &level_edges: cf_algo.leaves[vertex]->vertex->E) {
@@ -366,6 +380,7 @@ class SerialConnectivityManager {
                 
                 // if both endpoints are sketched AND the endpoints are connected in the cf
                 // we can shortcut and just insert into the sketching algo
+#if defined(ENABLE_DIRECT_SKETCH) && ENABLE_DIRECT_SKETCH
                 if (is_vertex_sketched(update.edge.src) && is_vertex_sketched(update.edge.dst)) {
                     if (cf_algo.is_connected(update.edge.src, update.edge.dst)) {
                         // std::cout << "Inserting edge from sketching algo: " <<  update.edge.src << ", "<< update.edge.dst << std::endl;
@@ -374,6 +389,7 @@ class SerialConnectivityManager {
                         return;
                     }
                 }
+#endif
 
                 insert_to_cf(update.edge.src, update.edge.dst);
                 
@@ -585,4 +601,5 @@ class SerialConnectivityManager {
             return total;
         }
 
+        long get_num_tree_ops() const { return sketching_algo.get_num_tree_ops(); }
 };

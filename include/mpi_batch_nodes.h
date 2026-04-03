@@ -91,6 +91,7 @@ class BatchInputNode {
   uint32_t  num_tiers;
   LinkCutTreeMaxAgg<int8_t> link_cut_tree;
   SketchlessEulerTourTree<> query_ett;
+  long tree_ops_count = 0;
 
   std::vector<BatchUpdateMessage> update_buffer;
   std::vector<BatchTreeCutMessage> tree_cut_buffer;
@@ -152,6 +153,7 @@ public:
   }
   const std::vector<GraphUpdate>& get_transaction_log() const { return transaction_log; }
   size_t space_usage_bytes() const { return 0; }
+  long get_num_tree_ops() const { return tree_ops_count; }
 };
 
 // ============================================================================

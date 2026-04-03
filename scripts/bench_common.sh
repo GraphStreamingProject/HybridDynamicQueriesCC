@@ -24,6 +24,8 @@ NP=""
 MPI_FLAGS=""
 RANK0_CPUS="1"
 HYBRID_THRESHOLD=""
+RECOVERY_SIZE=""
+MOVE_TO_SKETCH=""
 SPEED_INTERVAL=""
 AUTO_BUILD=false
 
@@ -43,6 +45,8 @@ bench_parse_common_args() {
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
       (--rank0-cpus)       RANK0_CPUS="$2"; shift 2;;
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
+      (--recovery-size)    RECOVERY_SIZE="$2"; shift 2;;
+      (--move-to-sketch)   MOVE_TO_SKETCH="$2"; shift 2;;
       (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
       (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
@@ -70,6 +74,8 @@ bench_parse_common_args() {
       echo "  --height-factor <F>    Override height factor"
       echo "  --num-tiers <N>        Override number of tiers"
       echo "  --hybrid-threshold <N> Override hybrid threshold"
+      echo "  --recovery-size <N>    Override recovery sketch size (default: hybrid-threshold/8)"
+      echo "  --move-to-sketch <N>   Override move-to-sketch threshold (hybrid only)"
         echo "  --auto-build           Build binary if not found"
         exit 1
       fi
@@ -124,6 +130,8 @@ bench_build_args() {
   [[ -n "$HEIGHT_FACTOR" ]]    && BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
   [[ -n "$NUM_TIERS" ]]        && BENCH_ARGS+=(--num-tiers "$NUM_TIERS")
   [[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
+  [[ -n "$RECOVERY_SIZE" ]]    && BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
+  [[ -n "$MOVE_TO_SKETCH" ]]   && BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
   [[ -n "$SPEED_INTERVAL" ]]   && BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
   return 0
 }

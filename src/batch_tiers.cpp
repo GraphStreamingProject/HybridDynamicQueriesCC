@@ -152,6 +152,7 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
         if (cut_start_tier[update_idx] >= 0) {
             link_cut_tree.cut(update.edge.src, update.edge.dst);
             query_ett.cut(update.edge.src, update.edge.dst);
+            tree_ops_count++;
             transaction_log.push_back(update);
         }
     }
@@ -691,12 +692,14 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                     _pending_cuts.push_back({{c, d}, first_appeared_tier});
                                     link_cut_tree.cut(c, d);
                                     query_ett.cut(c, d);
+                                    tree_ops_count++;
                                     transaction_log.push_back({{c, d}, DELETE});
 
                                     // and push the link we just found
                                     _pending_links.push_back({a, b});
                                     link_cut_tree.link(a, b, tier_idx + 1);
                                     query_ett.link(a, b);
+                                    tree_ops_count++;
                                     transaction_log.push_back({{a, b}, INSERT});
                                     // and update the dsu
                                 }
@@ -706,6 +709,7 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                 _pending_links.push_back({a, b});
                                 link_cut_tree.link(a, b, tier_idx + 1);
                                 query_ett.link(a, b);
+                                tree_ops_count++;
                                 transaction_log.push_back({{a, b}, INSERT});
                             }
                         }

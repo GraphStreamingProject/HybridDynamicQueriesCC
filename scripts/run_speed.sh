@@ -15,7 +15,7 @@
 # Other flags:
 #   --list          Show available built configs
 #   --batch-size N  --height-factor F  --num-tiers N
-#   --mpi-flags "..." --hybrid-threshold N
+#   --mpi-flags "..." --hybrid-threshold N --recovery-size N
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "${SCRIPT_DIR}/bench_common.sh"

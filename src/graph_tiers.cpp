@@ -63,6 +63,7 @@ void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 		cut_start_tier = static_cast<uint32_t>(cut_edge_info.second);
 		link_cut_tree.cut(update.edge.src, update.edge.dst);
 		query_ett.cut(update.edge.src, update.edge.dst);
+		tree_ops_count++;
 	}
 	START(su);
 	std::atomic<bool> did_cut(cut_start_tier != UINT32_MAX);
@@ -198,6 +199,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 				START(lct3);
 				link_cut_tree.cut(c,d);
 				query_ett.cut(c,d);
+				tree_ops_count++;
 				STOP(lct_time, lct3);
 			}
 
@@ -212,6 +214,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			START(lct4);
 			link_cut_tree.link(a,b, tier+1);
 			query_ett.link(a,b);
+			tree_ops_count++;
 			STOP(lct_time, lct4);
 		}
 		// if (both_components_maximized) {

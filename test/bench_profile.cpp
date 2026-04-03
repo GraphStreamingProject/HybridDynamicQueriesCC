@@ -156,6 +156,8 @@ struct ProfileConfig {
     double height_factor = 0;
     int num_tiers = 0;
     int hybrid_threshold = 0;
+  int recovery_size = 0;
+    int move_to_sketch = 0;
     std::string output_dir = "results/profile";
     long report_interval = 1000000;
 };
@@ -165,7 +167,7 @@ static ProfileConfig parse_args(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
-                     "[--num-tiers N] [--hybrid-threshold N] "
+                  "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] "
                      "[--output-dir dir] [--report-interval N]"
                   << std::endl;
         exit(1);
@@ -177,6 +179,8 @@ static ProfileConfig parse_args(int argc, char** argv) {
         else if (arg == "--height-factor" && i + 1 < argc) cfg.height_factor = std::atof(argv[++i]);
         else if (arg == "--num-tiers" && i + 1 < argc) cfg.num_tiers = std::atoi(argv[++i]);
         else if (arg == "--hybrid-threshold" && i + 1 < argc) cfg.hybrid_threshold = std::atoi(argv[++i]);
+        else if (arg == "--recovery-size" && i + 1 < argc) cfg.recovery_size = std::atoi(argv[++i]);
+        else if (arg == "--move-to-sketch" && i + 1 < argc) cfg.move_to_sketch = std::atoi(argv[++i]);
         else if (arg == "--output-dir" && i + 1 < argc) cfg.output_dir = argv[++i];
         else if (arg == "--report-interval" && i + 1 < argc) cfg.report_interval = std::atol(argv[++i]);
     }
@@ -294,26 +298,30 @@ int main(int argc, char** argv) {
                 }
 
                 std::cout << "Profile update " << i << "/" << edgecount
-                          << " max_tier=" << max_maximal_tier << std::endl;
+                          << " max_tier=" << max_maximal_tier
+                          << " tree_ops=" << system.get_num_tree_ops() << std::endl;
             }
         }
 
         auto wall_end = std::chrono::high_resolution_clock::now();
         long wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
+        long final_tree_ops = system.get_num_tree_ops();
 
         // Write summary
         std::ofstream summary(summary_file);
-        summary << "stream\tconfig\tmax_tier\twall_time_ms\tbatch_size\theight_factor\tnum_tiers" << std::endl;
+        summary << "stream\tconfig\tmax_tier\twall_time_ms\tbatch_size\theight_factor\tnum_tiers\ttree_ops" << std::endl;
         summary << stream_basename << "\t"
                 << config_name << "\t"
                 << max_maximal_tier << "\t"
                 << wall_ms << "\t"
                 << actual_batch_size << "\t"
                 << hf << "\t"
-                << actual_num_tiers << std::endl;
+                << actual_num_tiers << "\t"
+                << final_tree_ops << std::endl;
 
         std::cout << "Profile complete. max_tier=" << max_maximal_tier
-                  << " wall_time=" << wall_ms << "ms" << std::endl;
+                  << " wall_time=" << wall_ms << "ms"
+                  << " tree_ops=" << final_tree_ops << std::endl;
         std::cout << "Space file: " << space_file << std::endl;
         std::cout << "Summary file: " << summary_file << std::endl;
     };
@@ -323,6 +331,8 @@ int main(int argc, char** argv) {
   #if IS_HYBRID
     BenchSystem system(num_nodes, actual_num_tiers, actual_batch_size, seed);
     if (cfg.hybrid_threshold > 0) system.set_threshold(cfg.hybrid_threshold);
+    if (cfg.recovery_size > 0) system.set_recovery_size(cfg.recovery_size);
+    if (cfg.move_to_sketch > 0) system.set_move_to_sketch(cfg.move_to_sketch);
   #elif defined(CUPCAKE_ALGO_BATCH_TIERS)
     BenchSystem system(num_nodes, actual_num_tiers, actual_batch_size, seed);
   #else
@@ -339,6 +349,8 @@ int main(int argc, char** argv) {
       #if IS_HYBRID
         BenchSystem system(num_nodes, actual_num_tiers, actual_batch_size, seed);
         if (cfg.hybrid_threshold > 0) system.set_threshold(cfg.hybrid_threshold);
+        if (cfg.recovery_size > 0) system.set_recovery_size(cfg.recovery_size);
+        if (cfg.move_to_sketch > 0) system.set_move_to_sketch(cfg.move_to_sketch);
       #else
         #if defined(USE_BATCH_INPUT_NODE) && USE_BATCH_INPUT_NODE
         BatchInputNode system(num_nodes, actual_num_tiers, actual_batch_size, seed);

@@ -74,6 +74,7 @@ class InputNode {
   // LinkCutTree<> link_cut_tree;
   LinkCutTreeMaxAgg<int8_t> link_cut_tree;
   SketchlessEulerTourTree<> query_ett;
+  long tree_ops_count = 0;
   UpdateMessage* update_buffer;
   
   std::vector<GraphUpdate> transaction_log;
@@ -133,7 +134,7 @@ public:
   const std::vector<GraphUpdate>& get_transaction_log() const {
     return transaction_log;
   }
-  
+  long get_num_tree_ops() const { return tree_ops_count; }
 };
 
 template <typename TreeStrategy>

@@ -79,6 +79,7 @@ void InputNode::process_updates() {
             // potentially - revisit
             link_cut_tree.cut(update.edge.src, update.edge.dst);
             query_ett.cut(update.edge.src, update.edge.dst);
+            tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
             transaction_log.push_back(update);
         }
@@ -99,6 +100,7 @@ void InputNode::process_updates() {
         unlikely_if (split_revert_buffer[update_idx-1] != MAX_INT) {
             link_cut_tree.link(update.edge.src, update.edge.dst, split_revert_buffer[update_idx-1]);
             query_ett.link(update.edge.src, update.edge.dst);
+            tree_ops_count++;
             // transaction_log.add(update.edge, generate_entry_dINSERT);
             // // TODO - not actually sure if update is an insert type
             transaction_log.push_back(GraphUpdate{update.edge, INSERT});
@@ -120,6 +122,7 @@ void InputNode::process_updates() {
         unlikely_if (update_buffer[update_idx].cut_start_tier != UINT32_MAX) {
             link_cut_tree.cut(update.edge.src, update.edge.dst);
             query_ett.cut(update.edge.src, update.edge.dst);
+            tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
             transaction_log.push_back(update);
         }
@@ -170,6 +173,7 @@ void InputNode::process_updates() {
                     if (update_message.type == LINK) {
                         link_cut_tree.link(update_message.endpoint1, update_message.endpoint2, update_message.start_tier);
                         query_ett.link(update_message.endpoint1, update_message.endpoint2);
+                        tree_ops_count++;
                         // transaction_log.add(update_message, INSERT);
                         transaction_log.push_back(
                             GraphUpdate{Edge{update_message.endpoint1, update_message.endpoint2}, INSERT});
@@ -177,6 +181,7 @@ void InputNode::process_updates() {
                     } else if (update_message.type == CUT) {
                         link_cut_tree.cut(update_message.endpoint1, update_message.endpoint2);
                         query_ett.cut(update_message.endpoint1, update_message.endpoint2);
+                        tree_ops_count++;
                         // transaction_log.add(update_message, DELETE);
                         transaction_log.push_back(
                             GraphUpdate{Edge{update_message.endpoint1, update_message.endpoint2}, DELETE});
