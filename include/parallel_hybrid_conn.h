@@ -6,7 +6,7 @@
 #include <atomic>
 #include <deque>
 
-template <typename SketchAlgoClass = InputNode> requires(DynamicSketchConcept<SketchAlgoClass>)
+template <typename SketchAlgoClass = InputNode, typename RecoverySketchType = NodeRecoveryIBLTCascade> requires(DynamicSketchConcept<SketchAlgoClass>)
 class ParallelConnectivityManager {
 public:
     SCCWN<> cf_algo;
@@ -266,7 +266,7 @@ private:
                         break;
                     }
                     double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
-                    auto* sketch = new SparseRecovery((size_t)num_nodes, (size_t)dense_threshold / 8, cleanup_adjustment_factor, (uint64_t)seed, false);
+                    auto* sketch = new RecoverySketchType((size_t)num_nodes, (size_t)dense_threshold / 8, cleanup_adjustment_factor, (uint64_t)seed, false);
                     recovery_sketches[cmd.vertex] = sketch;
                     approx_space_usage_bytes.fetch_add(sketch->space_usage_bytes());
                     active_vertices.fetch_add(1);
@@ -301,7 +301,7 @@ private:
         std::atomic<bool> running{false};
         std::atomic<uint64_t> processed_seq_num{0};
 
-        absl::flat_hash_map<node_id_t, SparseRecovery*> recovery_sketches;
+        absl::flat_hash_map<node_id_t, RecoverySketchType*> recovery_sketches;
         std::deque<std::pair<uint64_t, node_id_t>> retired_vertices;
         std::atomic<node_id_t> active_vertices{0};
         std::atomic<size_t> approx_space_usage_bytes{0};

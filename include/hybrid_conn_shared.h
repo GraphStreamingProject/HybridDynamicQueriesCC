@@ -22,6 +22,11 @@ concept DynamicSketchConcept = requires(T t) {
     { t.space_usage_bytes() } -> std::same_as<size_t>;
 };
 
+// --- Node-level recovery sketch aliases (keyed by node_id_t, not edge_id_t) ---
+using NodeRecoveryCFRChain   = CFRChain<node_id_t, vec_hash_t>;
+using NodeRecoveryIBLT       = IBLT<node_id_t, vec_hash_t>;
+using NodeRecoveryIBLTCascade = IBLTCascade<node_id_t, vec_hash_t>;
+
 // --- Shared Types ---
 struct SketchCommand {
     enum class Type : uint8_t {

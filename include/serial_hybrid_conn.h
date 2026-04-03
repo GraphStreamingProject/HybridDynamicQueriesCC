@@ -4,7 +4,7 @@
 
 
 
-template <typename SketchAlgoClass = InputNode> requires(DynamicSketchConcept<SketchAlgoClass>)
+template <typename SketchAlgoClass = InputNode, typename RecoverySketchType = NodeRecoveryIBLTCascade> requires(DynamicSketchConcept<SketchAlgoClass>)
 class SerialConnectivityManager {
     // TODO 
     public:
@@ -28,8 +28,7 @@ class SerialConnectivityManager {
         size_t seed;
         node_id_t num_nodes;
         // GraphTiers<DefaultSketchColumn> sketching_algo;
-        // TODO - move semantics for sparserecovery?
-        absl::flat_hash_map<node_id_t, SparseRecovery*> recovery_sketches;
+        absl::flat_hash_map<node_id_t, RecoverySketchType*> recovery_sketches;
         
         
         // tracks which of our CF edges are from the sketching algo
@@ -85,18 +84,16 @@ class SerialConnectivityManager {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
             sketching_algo.update(GraphUpdate{Edge{u, v}, INSERT});
-            auto edge_id = concat_pairing_fn(u, v);
-            recovery_sketches[u]->update(edge_id);
-            recovery_sketches[v]->update(edge_id);
+            recovery_sketches[u]->update(v);
+            recovery_sketches[v]->update(u);
             total_sketch_insertions++;
         }
         inline void delete_from_sketch(node_id_t u, node_id_t v) {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
             sketching_algo.update(GraphUpdate{Edge{u, v}, DELETE});
-            auto edge_id = concat_pairing_fn(u, v);
-            recovery_sketches[u]->update(edge_id);
-            recovery_sketches[v]->update(edge_id);
+            recovery_sketches[u]->update(v);
+            recovery_sketches[v]->update(u);
             total_sketch_deletions++;
         }
         
@@ -131,7 +128,7 @@ class SerialConnectivityManager {
             // i think 5 sample should be enough?
             double cleanup_adjustment_factor = 5.0 / (log2(num_nodes));
             // double cleanup_adjustment_factor = 1.0;
-            recovery_sketches[vertex] = new SparseRecovery((size_t)num_nodes, (size_t)DENSE_THRESHOLD / 4, cleanup_adjustment_factor, (uint64_t)seed, false);
+            recovery_sketches[vertex] = new RecoverySketchType((size_t)num_nodes, (size_t)DENSE_THRESHOLD / 4, cleanup_adjustment_factor, (uint64_t)seed, false);
             
             // update your neighbors' dense edge counts
             for (auto &level_edges: cf_algo.leaves[vertex]->vertex->E) {
@@ -213,7 +210,8 @@ class SerialConnectivityManager {
 
     public:
         SerialConnectivityManager(node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed)
-            : num_nodes(num_nodes), sketching_algo(num_nodes, num_tiers, batch_size, seed), cf_algo(num_nodes), seed(seed) {
+            : sketching_algo(num_nodes, num_tiers, batch_size, seed), cf_algo(num_nodes), seed(seed) {
+                this->num_nodes = num_nodes;
                 num_pending_dense_edges.resize(num_nodes, 0);
                 num_cf_edges.resize(num_nodes, 0);
                 num_edges.resize(num_nodes, 0);
@@ -302,16 +300,17 @@ class SerialConnectivityManager {
             // std::cout << "edge count for vertex " << vertex << " is " << num_edges[vertex] << std::endl;
             // std::cout << "edge count in cf for vertex " << vertex << " is " << num_cf_edges[vertex] << std::endl;
             // std::cout << "recovered: " << recovery_attempt.recovered_indices.size() << std::endl;
-            // then remove the edge from neighbors' recovery structures
+            // then remove the vertex from neighbors' recovery structures
             for (vec_t &vec: recovery_attempt.recovered_indices) {
-                Edge edge = inv_concat_pairing_fn(vec);
-                node_id_t other_vertex = edge.src == vertex ? edge.dst : edge.src;
-                recovery_sketches[other_vertex]->update(vec);
+                node_id_t other_vertex = (node_id_t)vec;
+                recovery_sketches[other_vertex]->update(vertex);
             }
             // and flush the edges out of the sketching algo
             for (vec_t &vec: recovery_attempt.recovered_indices) {
-                Edge edge = inv_concat_pairing_fn(vec);
-                sketching_algo.update(GraphUpdate{edge, DELETE});
+                node_id_t other_vertex = (node_id_t)vec;
+                node_id_t src = std::min(vertex, other_vertex);
+                node_id_t dst = std::max(vertex, other_vertex);
+                sketching_algo.update(GraphUpdate{Edge{src, dst}, DELETE});
                 total_sketch_deletions++;
             }
             // before we flush the transaction log - uninitialize
@@ -332,8 +331,8 @@ class SerialConnectivityManager {
             //     NOTE - THERE MIGHT BE DOUBLE-DIPPED EDGES
             //     
             for (vec_t &vec: recovery_attempt.recovered_indices) {
-                Edge edge = inv_concat_pairing_fn(vec);
-                insert_to_cf(edge.src, edge.dst);
+                node_id_t other_vertex = (node_id_t)vec;
+                insert_to_cf(vertex, other_vertex);
             }
             return true;
         }
@@ -582,7 +581,7 @@ class SerialConnectivityManager {
             for (auto &pair: recovery_sketches) {
                 total += pair.second->space_usage_bytes();
             }
-            total += recovery_sketches.bucket_count() * sizeof(std::pair<node_id_t, SparseRecovery*>);
+            total += recovery_sketches.bucket_count() * sizeof(std::pair<node_id_t, RecoverySketchType*>);
             return total;
         }
 
