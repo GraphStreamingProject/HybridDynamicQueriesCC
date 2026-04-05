@@ -131,6 +131,6 @@ extern int hybrid_threshold_arg;
 #define START(X) ;
 #define STOP(C, X) ;
 
-#define VERTICES_TO_EDGE(A, B) A<B ? (((edge_id_t)A)<<32) + ((edge_id_t)B) : (((edge_id_t)B)<<32) + ((edge_id_t)A)
+#define VERTICES_TO_EDGE(A, B) ((A)<(B) ? (((edge_id_t)(A))<<32) + ((edge_id_t)(B)) : (((edge_id_t)(B))<<32) + ((edge_id_t)(A)))
 
 #define MAX_INT (std::numeric_limits<int>::max())

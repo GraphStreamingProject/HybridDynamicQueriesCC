@@ -22,7 +22,7 @@ void EulerTourTree<SketchClass, Container>::link(node_id_t u, node_id_t v) {
 
 template <typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
 void EulerTourTree<SketchClass, Container>::cut(node_id_t u, node_id_t v) {
-  assert(_has_edge(u, v));
+  
   ett_node(u).cut(ett_node(v), temp_sketch);
 }
 

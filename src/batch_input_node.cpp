@@ -9,7 +9,7 @@
 
 BatchInputNode::BatchInputNode(node_id_t num_nodes, uint32_t num_tiers, int batch_size, int seed)
     : num_nodes(num_nodes), num_tiers(num_tiers),
-      link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed) {
+  query_forest(num_nodes, seed) {
   buffer_capacity = batch_size;
   update_buffer.resize(buffer_capacity);
   tree_cut_buffer.reserve(batch_size);
@@ -25,10 +25,10 @@ void BatchInputNode::update(GraphUpdate update) {
   if (update.edge.src > update.edge.dst) {
     std::swap(update.edge.src, update.edge.dst);
   }
-  if (!query_ett.is_initialized(update.edge.src))
-    query_ett.initialize_node(update.edge.src);
-  if (!query_ett.is_initialized(update.edge.dst))
-    query_ett.initialize_node(update.edge.dst);
+  if (!query_forest.is_initialized(update.edge.src))
+    query_forest.initialize_node(update.edge.src);
+  if (!query_forest.is_initialized(update.edge.dst))
+    query_forest.initialize_node(update.edge.dst);
   BatchUpdateMessage msg;
   msg.edge = update.edge;
   msg.op = (update.type == INSERT) ? BATCH_OP_INSERT : BATCH_OP_DELETE;
@@ -104,16 +104,14 @@ void BatchInputNode::process_updates() {
   // ---- Phase 0: Pre-compute tree-edge deletion tiers ----
   tree_cut_buffer.clear();
   for (uint32_t i = 0; i < num_updates; i++) {
-    BatchUpdateMessage& msg = get_update_buffer(i);
-    // micro-optimization: skip LCT check if 
-    // the edge doesn't exist in the query ETT (i.e. definitely not a tree edge).
-    if (msg.op == BATCH_OP_DELETE && query_ett.has_edge(msg.edge.src, msg.edge.dst)) {
-      std::pair<Edge, int8_t> info = link_cut_tree.path_query(msg.edge.src, msg.edge.dst);
-      BatchTreeCutMessage cut_msg;
-      cut_msg.edge = msg.edge;
-      cut_msg.cut_start_tier = static_cast<uint8_t>(info.second);
-      tree_cut_buffer.push_back(cut_msg);
-    }
+      BatchUpdateMessage& msg = get_update_buffer(i);
+      if (msg.op == BATCH_OP_DELETE && query_forest.has_edge(msg.edge.src, msg.edge.dst)) {
+          std::pair<Edge, int8_t> info = query_forest.path_query(msg.edge.src, msg.edge.dst);
+          BatchTreeCutMessage cut_msg;
+          cut_msg.edge = msg.edge;
+          cut_msg.cut_start_tier = static_cast<uint8_t>(info.second);
+          tree_cut_buffer.push_back(cut_msg);
+      }
   }
 
   // Broadcast the normal-batch control, then structural cuts, then sketch payload.
@@ -130,8 +128,7 @@ void BatchInputNode::process_updates() {
   // Apply tree-edge cuts locally on LCT + query ETT while tier nodes are
   // processing their received tree cuts.
   for (const auto& cut_msg : tree_cut_buffer) {
-    link_cut_tree.cut(cut_msg.edge.src, cut_msg.edge.dst);
-    query_ett.cut(cut_msg.edge.src, cut_msg.edge.dst);
+    query_forest.cut(cut_msg.edge.src, cut_msg.edge.dst);
     tree_ops_count++;
     transaction_log.push_back({{cut_msg.edge.src, cut_msg.edge.dst}, DELETE});
   }
@@ -220,8 +217,8 @@ void BatchInputNode::process_updates() {
         std::swap(a, b);
       }
 
-      if (query_ett.is_connected(a, b)) {
-        std::pair<Edge, int8_t> max_edge = link_cut_tree.path_query(a, b);
+      if (query_forest.connected(a, b)) {
+        std::pair<Edge, int8_t> max_edge = query_forest.path_query(a, b);
         node_id_t c_node = max_edge.first.src;
         node_id_t d_node = max_edge.first.dst;
         uint32_t appeared_tier = static_cast<uint32_t>(max_edge.second);
@@ -239,8 +236,7 @@ void BatchInputNode::process_updates() {
         cut_instr.start_tier = appeared_tier;
         instruction_buffer.push_back(cut_instr);
 
-        link_cut_tree.cut(c_node, d_node);
-        query_ett.cut(c_node, d_node);
+        query_forest.cut(c_node, d_node);
         tree_ops_count++;
         transaction_log.push_back({{c_node, d_node}, DELETE});
 
@@ -252,8 +248,7 @@ void BatchInputNode::process_updates() {
         link_instr.start_tier = first_isolated_tier + 1;
         instruction_buffer.push_back(link_instr);
 
-        link_cut_tree.link(a, b, first_isolated_tier + 1);
-        query_ett.link(a, b);
+        query_forest.link(a, b, static_cast<int8_t>(first_isolated_tier + 1));
         tree_ops_count++;
         transaction_log.push_back({{a, b}, INSERT});
       } else {
@@ -265,8 +260,7 @@ void BatchInputNode::process_updates() {
         link_instr.start_tier = first_isolated_tier + 1;
         instruction_buffer.push_back(link_instr);
 
-        link_cut_tree.link(a, b, first_isolated_tier + 1);
-        query_ett.link(a, b);
+        query_forest.link(a, b, static_cast<int8_t>(first_isolated_tier + 1));
         tree_ops_count++;
         transaction_log.push_back({{a, b}, INSERT});
       }
@@ -305,12 +299,12 @@ void BatchInputNode::process_all_updates() {
 
 bool BatchInputNode::connectivity_query(node_id_t a, node_id_t b) {
   process_all_updates();
-  return query_ett.is_connected(a, b);
+  return query_forest.is_connected(a, b);
 }
 
 std::vector<std::set<node_id_t>> BatchInputNode::cc_query() {
   process_all_updates();
-  return query_ett.cc_query();
+  return query_forest.cc_query();
 }
 
 void BatchInputNode::end() {
@@ -336,7 +330,7 @@ SpaceReport BatchInputNode::report_space_usage() {
     MPI_Recv(&report.tier_reports[i], sizeof(SpaceReportMessage), MPI_BYTE,
              i + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
   }
-  report.query_tree_bytes = query_ett.space_usage_bytes();
-  report.top_level_lct_bytes = link_cut_tree.space_usage_bytes();
+  report.query_tree_bytes = query_forest.space_usage_bytes();
+  report.top_level_lct_bytes = query_forest.lct_space_usage_bytes();
   return report;
 }

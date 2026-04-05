@@ -32,7 +32,7 @@
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_nodes(num_nodes), seed(seed), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(2048, true) {
+BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_nodes(num_nodes), seed(seed), query_forest(num_nodes, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(2048, true) {
     // TODO - use the batch_size parameter?
     _component_reps_dsu = union_find_local<int32_t>(maximum_batch_size * 2);
 	// Algorithm parameters
@@ -72,7 +72,7 @@ BatchTiers<TreeStrategy>::BatchTiers(node_id_t num_nodes, uint64_t seed) : num_n
 template <typename TreeStrategy>
     requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 BatchTiers<TreeStrategy>::BatchTiers(
-    node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed) : num_nodes(num_nodes), seed(seed), maximum_batch_size(batch_size), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(num_nodes, true) {
+    node_id_t num_nodes, uint32_t num_tiers, int batch_size, size_t seed) : num_nodes(num_nodes), seed(seed), maximum_batch_size(batch_size), query_forest(num_nodes, seed), _unique_update_ids(2048), _component_reps_dsu(0), _already_checked_components(num_nodes, true) {
     // TODO - use the batch_size parameter?
     _component_reps_dsu = union_find_local<int32_t>(maximum_batch_size * 2);
 
@@ -112,7 +112,6 @@ requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> &updates) {
 
     size_t num_updates = updates.size();
-    size_t num_tiers = ett.size();
     assert(num_updates <= maximum_batch_size);
     _already_checked_components.clear();
     // std::cout << "Processing batch of size " << num_updates << " on " << num_tiers << " tiers." << std::endl;
@@ -124,7 +123,7 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     for (size_t update_idx = 0; update_idx < num_updates; ++update_idx) {
         const auto& update = updates[update_idx];
         if (update.type == DELETE && is_tree_edge(update.edge.src, update.edge.dst)) {
-            std::pair<Edge, int8_t> cut_edge_info = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+            std::pair<Edge, int8_t> cut_edge_info = query_forest.path_query(update.edge.src, update.edge.dst);
             cut_start_tier[update_idx] = static_cast<int32_t>(cut_edge_info.second);
         }
     }
@@ -150,8 +149,7 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     for (size_t update_idx = 0; update_idx < updates.size(); ++update_idx) {
         const auto& update = updates[update_idx];
         if (cut_start_tier[update_idx] >= 0) {
-            link_cut_tree.cut(update.edge.src, update.edge.dst);
-            query_ett.cut(update.edge.src, update.edge.dst);
+            query_forest.cut(update.edge.src, update.edge.dst);
             tree_ops_count++;
             transaction_log.push_back(update);
         }
@@ -239,16 +237,14 @@ template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 std::vector<std::set<node_id_t>> BatchTiers<TreeStrategy>::get_cc() {
     this->flush_buffer();
-    return query_ett.cc_query();
+    return query_forest.cc_query();
 }
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 bool BatchTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
     this->flush_buffer();
-    // TODO - use a sketchless ETT
-	// return this->link_cut_tree.find_root(a) == this->link_cut_tree.find_root(b);
-    return query_ett.is_connected(a, b); 
+    return query_forest.is_connected(a, b);
 }
 
 template <typename TreeStrategy>
@@ -669,11 +665,11 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                             // if it does, then we either need to cut it, or ignore this update
 
                             // if (a_root == b_root) {
-                            if (link_cut_tree.connected(a, b)) {
+                            if (query_forest.connected(a, b)) {
                                 // a path exists, so we need to cut the maximum weight edge
                                 // on the path
                                 // THIS REALLY CANT BE PARALLELIZED atm
-                                std::pair<Edge, int8_t> max_edge = link_cut_tree.path_query(a, b);
+                                std::pair<Edge, int8_t> max_edge = query_forest.path_query(a, b);
                                 node_id_t c = max_edge.first.src;
                                 node_id_t d = max_edge.first.dst;
                                 // node_id_t c = (node_id_t)max_edge.first;
@@ -690,15 +686,13 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                 } else {
                                     // likewise, if it's a higher tier, definitely perform the cut
                                     _pending_cuts.push_back({{c, d}, first_appeared_tier});
-                                    link_cut_tree.cut(c, d);
-                                    query_ett.cut(c, d);
+                                    query_forest.cut(c, d);
                                     tree_ops_count++;
                                     transaction_log.push_back({{c, d}, DELETE});
 
                                     // and push the link we just found
                                     _pending_links.push_back({a, b});
-                                    link_cut_tree.link(a, b, tier_idx + 1);
-                                    query_ett.link(a, b);
+                                    query_forest.link(a, b, static_cast<int8_t>(tier_idx + 1));
                                     tree_ops_count++;
                                     transaction_log.push_back({{a, b}, INSERT});
                                     // and update the dsu
@@ -707,8 +701,7 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                 // if there was no competing link between the endpoints in the LCT,
                                 // then we just link them.
                                 _pending_links.push_back({a, b});
-                                link_cut_tree.link(a, b, tier_idx + 1);
-                                query_ett.link(a, b);
+                                query_forest.link(a, b, static_cast<int8_t>(tier_idx + 1));
                                 tree_ops_count++;
                                 transaction_log.push_back({{a, b}, INSERT});
                             }
@@ -766,8 +759,8 @@ SpaceReport BatchTiers<TreeStrategy>::report_space_usage() {
         report.tier_reports[i].space_bytes = ett[i].space_usage_bytes();
         report.tier_reports[i].num_components = ett[i].num_components();
     }
-    report.query_tree_bytes = query_ett.space_usage_bytes();
-    report.top_level_lct_bytes = link_cut_tree.space_usage_bytes();
+    report.query_tree_bytes = query_forest.space_usage_bytes();
+    report.top_level_lct_bytes = query_forest.lct_space_usage_bytes();
     return report;
 }
 

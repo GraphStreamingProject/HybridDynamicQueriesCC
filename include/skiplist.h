@@ -131,7 +131,6 @@ public:
   void update_agg_entry_deltas(const ColumnEntryDeltas &deltas) {
       if (!this->sketch_agg.is_initialized())  // Only do something if this node has a sketch
           return;
-      size_t sz = deltas.size();
       for (const auto& delta : deltas)
           this->sketch_agg.apply_entry_delta(delta);
   }
@@ -144,7 +143,6 @@ public:
   void update_agg_atomic_entry_deltas(const ColumnEntryDeltas &deltas) {
       if (!this->sketch_agg.is_initialized())  // Only do something if this node has a sketch
           return;
-      size_t sz = deltas.size();
       for (const auto& delta : deltas)
           this->sketch_agg.atomic_apply_entry_delta(delta);
   }

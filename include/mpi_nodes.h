@@ -11,9 +11,8 @@
 #include "types.h"
 #include "util.h"
 #include "euler_tour_tree.h"
-#include "sketchless_euler_tour_tree.h"
 // #include "link_cut_tree.h"
-#include "lct_v2.h"
+#include "top_level_forest.h"
 #include "mpi_functions.h"
 #include "sketch/sketch_concept.h"
 #include "sketch/sketch_columns.h"
@@ -71,9 +70,7 @@ struct GreedyRefreshMessage {
 class InputNode {
   node_id_t num_nodes;
   uint32_t num_tiers;
-  // LinkCutTree<> link_cut_tree;
-  LinkCutTreeMaxAgg<int8_t> link_cut_tree;
-  SketchlessEulerTourTree<> query_ett;
+  TopLevelForest query_forest;
   long tree_ops_count = 0;
   UpdateMessage* update_buffer;
   
@@ -95,16 +92,13 @@ public:
   // wihh its tier nodes to initialize data structures.
   // in any hybrid tests, we're just gonna do this ahead of time.
   void initialize_node(node_id_t u) {
-    query_ett.initialize_node(u);
-    link_cut_tree.initialize_node(u);
+    query_forest.initialize_node(u);
   }; // no-op
   void uninitialize_node(node_id_t u) {
-    query_ett.uninitialize_node(u);
-    link_cut_tree.uninitialize_node(u);
+    query_forest.uninitialize_node(u);
   }; // no-op
   void initialize_all_nodes() {
-    query_ett.initialize_all_nodes(num_nodes);
-    link_cut_tree.initialize_all_nodes(num_nodes);
+    query_forest.initialize_all_nodes(num_nodes);
   }; // no-op
   void update(GraphUpdate update);
   void process_all_updates();

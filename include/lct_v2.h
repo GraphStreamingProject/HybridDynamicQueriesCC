@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -74,6 +75,7 @@ class LinkCutTreeMaxAgg {
   void link(node_id_t u, node_id_t v, std::pair<Edge, WeightT> weight) { link(u, v, weight.second); }
   void cut(node_id_t u, node_id_t v);
   bool connected(node_id_t u, node_id_t v);
+  bool has_edge(node_id_t u, node_id_t v);
   std::pair<Edge, WeightT> path_query(node_id_t u, node_id_t v);
   size_t space_usage_bytes() const;
  private:
@@ -110,6 +112,7 @@ public:
       if constexpr (!std::is_same_v<Container, std::vector<NodeMaxLCT<WeightT>>>) {
           assert(verts.find(v) != verts.end());
           delete verts[v];
+        verts.erase(v);
       }
   }
   void initialize_all_nodes() {
@@ -295,6 +298,9 @@ auto NodeMaxLCT<WeightT>::path_query(NodeMaxLCT<WeightT>* other) -> std::pair<st
 
   std::pair<std::pair<NodeMaxLCT<WeightT>*, NodeMaxLCT<WeightT>*>, WeightT> max_edge;
   max_edge.second = path_root->max;
+  if (max_edge.second == sentinel()) {
+    return {{nullptr, nullptr}, sentinel()};
+  }
   max_edge.first = path_root->get_edge_with_weight(max_edge.second);
   return max_edge;
  }
@@ -307,9 +313,11 @@ void NodeMaxLCT<WeightT>::cut(NodeMaxLCT* neighbor) {
    push_flip();
    neighbor->c[0] = nullptr;
    neighbor->w[0] = sentinel();
+   neighbor->head = true;
    neighbor->recompute_max();
    par = nullptr;
    w[1] = sentinel();
+   head = true;
    recompute_max();
  }
  
@@ -319,7 +327,8 @@ void NodeMaxLCT<WeightT>::link(NodeMaxLCT* child, WeightT weight) {
    child->splay();
    child->par = this;
    child->w[0] = weight;
-   child->head = true;
+   child->head = false;
+   child->recompute_max();
  }
  
 template <typename WeightT, typename Container>
@@ -341,6 +350,8 @@ LinkCutTreeMaxAgg<WeightT, Container>::~LinkCutTreeMaxAgg() {
 
 template <typename WeightT, typename Container>
 void LinkCutTreeMaxAgg<WeightT, Container>::link(node_id_t u, node_id_t v, WeightT weight) {
+  assert(u != v);
+  assert(!connected(u, v));
   const auto u_idx = static_cast<size_t>(u);
   const auto v_idx = static_cast<size_t>(v);
   vert(u_idx).link(vert_ptr(v_idx), weight);
@@ -348,6 +359,13 @@ void LinkCutTreeMaxAgg<WeightT, Container>::link(node_id_t u, node_id_t v, Weigh
 
 template <typename WeightT, typename Container>
 void LinkCutTreeMaxAgg<WeightT, Container>::cut(node_id_t u, node_id_t v) {
+  assert(u != v);
+  assert(connected(u, v));
+#ifndef NDEBUG
+  const auto cut_edge = path_query(u, v);
+  assert(cut_edge.second != std::numeric_limits<WeightT>::lowest());
+  assert(VERTICES_TO_EDGE(cut_edge.first.src, cut_edge.first.dst) == VERTICES_TO_EDGE(u, v));
+#endif
   const auto u_idx = static_cast<size_t>(u);
   const auto v_idx = static_cast<size_t>(v);
   vert(u_idx).cut(vert_ptr(v_idx));
@@ -361,13 +379,40 @@ bool LinkCutTreeMaxAgg<WeightT, Container>::connected(node_id_t u, node_id_t v) 
 }
 
 template <typename WeightT, typename Container>
+bool LinkCutTreeMaxAgg<WeightT, Container>::has_edge(node_id_t u, node_id_t v) {
+  if (u == v) {
+    return false;
+  }
+  if (!connected(u, v)) {
+    return false;
+  }
+  const auto q = path_query(u, v);
+  if (q.second == std::numeric_limits<WeightT>::lowest()) {
+    return false;
+  }
+  return VERTICES_TO_EDGE(q.first.src, q.first.dst) == VERTICES_TO_EDGE(u, v);
+}
+
+template <typename WeightT, typename Container>
 std::pair<Edge, WeightT> LinkCutTreeMaxAgg<WeightT, Container>::path_query(node_id_t u, node_id_t v) {
+  assert(u < num_verts && v < num_verts);
   const auto u_idx = static_cast<size_t>(u);
   const auto v_idx = static_cast<size_t>(v);
+  if (u == v) {
+    return {{static_cast<node_id_t>(-1), static_cast<node_id_t>(-1)}, std::numeric_limits<WeightT>::lowest()};
+  }
+  if (!connected(u, v)) {
+    return {{static_cast<node_id_t>(-1), static_cast<node_id_t>(-1)}, std::numeric_limits<WeightT>::lowest()};
+  }
   auto pointer_edge = vert(u_idx).path_query(vert_ptr(v_idx));
   std::pair<Edge, WeightT> edge;
-  edge.first.src = static_cast<node_id_t>(pointer_edge.first.first->get_node_id());
-  edge.first.dst = static_cast<node_id_t>(pointer_edge.first.second->get_node_id());
+  if (pointer_edge.first.first == nullptr) {
+    edge.first.src = static_cast<node_id_t>(-1);
+    edge.first.dst = static_cast<node_id_t>(-1);
+  } else {
+    edge.first.src = static_cast<node_id_t>(pointer_edge.first.first->get_node_id());
+    edge.first.dst = static_cast<node_id_t>(pointer_edge.first.second->get_node_id());
+  }
   edge.second = pointer_edge.second;
   return edge;
 }

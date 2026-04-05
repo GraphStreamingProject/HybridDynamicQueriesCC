@@ -1,7 +1,16 @@
 #include <gtest/gtest.h>
+#include <chrono>
 #include <iostream>
+#include <random>
+#include <queue>
+#include <unordered_set>
 #include <string>
 #include "link_cut_tree.h"
+#include "lct_v2.h"
+
+extern int command_line_n;
+extern int command_line_k;
+extern long command_line_seed;
 
 static bool validate(LinkCutNode* v) {
     bool valid = true;
@@ -212,4 +221,233 @@ TEST(LinkCutTreeSuite, random_links_and_cuts) {
     for (auto agg : path_aggregates) {
         EXPECT_EQ(agg.second, agg.first->max) << "Aggregate incorrect" << std::endl;
     }
+}
+
+static void run_lct_v2_throughput_default(node_id_t n,
+                                          uint64_t ops,
+                                          uint64_t seed) {
+    using Clock = std::chrono::high_resolution_clock;
+    std::mt19937_64 rng(seed);
+    std::uniform_int_distribution<node_id_t> dist(0, n - 1);
+
+    LinkCutTreeMaxAgg<int8_t> lct(static_cast<int>(n));
+    lct.initialize_all_nodes(n);
+
+    auto t0 = Clock::now();
+    for (node_id_t v = 1; v < n; ++v) {
+        lct.link(0, v, static_cast<int8_t>(1));
+    }
+    auto t1 = Clock::now();
+
+    volatile uint64_t connected_checksum = 0;
+    auto t2 = Clock::now();
+    for (uint64_t i = 0; i < ops; ++i) {
+        node_id_t a = dist(rng);
+        node_id_t b = dist(rng);
+        connected_checksum ^= static_cast<uint64_t>(lct.connected(a, b));
+    }
+    auto t3 = Clock::now();
+
+    volatile uint64_t path_checksum = 0;
+    auto t4 = Clock::now();
+    for (uint64_t i = 0; i < ops; ++i) {
+        node_id_t a = dist(rng);
+        node_id_t b = dist(rng);
+        if (a == b) {
+            b = static_cast<node_id_t>((b + 1) % n);
+        }
+        auto q = lct.path_query(a, b);
+        path_checksum ^= static_cast<uint64_t>(q.first.src) ^ static_cast<uint64_t>(q.first.dst);
+    }
+    auto t5 = Clock::now();
+
+    const double link_s = std::chrono::duration<double>(t1 - t0).count();
+    const double conn_s = std::chrono::duration<double>(t3 - t2).count();
+    const double path_s = std::chrono::duration<double>(t5 - t4).count();
+
+    const uint64_t link_ops = (n > 0) ? static_cast<uint64_t>(n - 1) : 0;
+    const uint64_t conn_ops_per_sec = (conn_s > 0.0) ? static_cast<uint64_t>(static_cast<double>(ops) / conn_s) : 0;
+    const uint64_t path_ops_per_sec = (path_s > 0.0) ? static_cast<uint64_t>(static_cast<double>(ops) / path_s) : 0;
+    const uint64_t link_ops_per_sec = (link_s > 0.0 && link_ops > 0) ? static_cast<uint64_t>(static_cast<double>(link_ops) / link_s) : 0;
+
+    std::cout << "[lct_v2_bench] backend=default_int8"
+              << " n=" << n
+              << " ops=" << ops
+              << " seed=" << seed << std::endl;
+    std::cout << "  link_build_star:  " << link_ops_per_sec << " ops/sec" << std::endl;
+    std::cout << "  connected_query:  " << conn_ops_per_sec << " ops/sec" << std::endl;
+    std::cout << "  path_query:       " << path_ops_per_sec << " ops/sec" << std::endl;
+    std::cout << "  checksums: connected=" << connected_checksum
+              << " path=" << path_checksum << std::endl;
+}
+
+TEST(LCTv2Bench, ThroughputManual) {
+    if (command_line_n <= 0 || command_line_k <= 0) {
+        GTEST_SKIP() << "Pass positional n and k to test runner for throughput benchmark";
+    }
+
+    const node_id_t n = static_cast<node_id_t>(command_line_n);
+    const uint64_t ops = static_cast<uint64_t>(command_line_k);
+    const uint64_t seed = (command_line_seed >= 0) ? static_cast<uint64_t>(command_line_seed) : 1ULL;
+
+    run_lct_v2_throughput_default(n, ops, seed);
+}
+
+TEST(LCTv2Correctness, HasEdgeBasic) {
+    LinkCutTreeMaxAgg<int8_t> lct(8);
+    lct.initialize_all_nodes(8);
+
+    lct.link(0, 1, static_cast<int8_t>(1));
+    lct.link(1, 2, static_cast<int8_t>(2));
+    lct.link(2, 3, static_cast<int8_t>(3));
+
+    EXPECT_TRUE(lct.has_edge(0, 1));
+    EXPECT_TRUE(lct.has_edge(1, 2));
+    EXPECT_TRUE(lct.has_edge(2, 3));
+
+    EXPECT_FALSE(lct.has_edge(0, 2));
+    EXPECT_FALSE(lct.has_edge(1, 3));
+    EXPECT_FALSE(lct.has_edge(0, 0));
+    EXPECT_FALSE(lct.has_edge(4, 5));
+
+    lct.cut(1, 2);
+    EXPECT_FALSE(lct.has_edge(1, 2));
+    EXPECT_FALSE(lct.connected(0, 3));
+}
+
+TEST(LCTv2Correctness, HasEdgeMatchesPathOnAdjacentPairs) {
+    LinkCutTreeMaxAgg<int8_t> lct(10);
+    lct.initialize_all_nodes(10);
+
+    const std::pair<node_id_t, node_id_t> edges[] = {
+        {0, 1}, {1, 2}, {1, 3}, {3, 4}, {4, 5}
+    };
+
+    for (const auto& e : edges) {
+        lct.link(e.first, e.second, static_cast<int8_t>(1));
+    }
+
+    for (const auto& e : edges) {
+        ASSERT_TRUE(lct.has_edge(e.first, e.second));
+        const auto q = lct.path_query(e.first, e.second);
+        ASSERT_EQ(VERTICES_TO_EDGE(q.first.src, q.first.dst), VERTICES_TO_EDGE(e.first, e.second));
+    }
+
+    EXPECT_FALSE(lct.has_edge(0, 5));
+    EXPECT_FALSE(lct.has_edge(2, 5));
+}
+
+static bool ref_connected(const std::vector<std::unordered_set<node_id_t>>& adj,
+                          node_id_t src,
+                          node_id_t dst) {
+    if (src == dst) return true;
+    std::vector<bool> seen(adj.size(), false);
+    std::queue<node_id_t> q;
+    seen[src] = true;
+    q.push(src);
+    while (!q.empty()) {
+        node_id_t u = q.front();
+        q.pop();
+        for (node_id_t v : adj[u]) {
+            if (!seen[v]) {
+                if (v == dst) return true;
+                seen[v] = true;
+                q.push(v);
+            }
+        }
+    }
+    return false;
+}
+
+TEST(LCTv2Correctness, RandomForestCrossCheck) {
+    constexpr node_id_t n = 24;
+    constexpr int rounds = 1200;
+    constexpr uint64_t seed = 1337;
+
+    LinkCutTreeMaxAgg<int8_t> lct(static_cast<int>(n));
+    lct.initialize_all_nodes(n);
+
+    std::vector<std::unordered_set<node_id_t>> adj(n);
+    std::vector<std::pair<node_id_t, node_id_t>> ref_edges;
+
+    std::mt19937_64 rng(seed);
+    std::uniform_int_distribution<node_id_t> dist(0, n - 1);
+    std::uniform_int_distribution<int> coin(0, 99);
+
+    auto add_ref_edge = [&](node_id_t a, node_id_t b) {
+        adj[a].insert(b);
+        adj[b].insert(a);
+        ref_edges.push_back({a, b});
+    };
+
+    auto remove_ref_edge = [&](node_id_t a, node_id_t b) {
+        adj[a].erase(b);
+        adj[b].erase(a);
+        const edge_id_t target = VERTICES_TO_EDGE(a, b);
+        for (size_t i = 0; i < ref_edges.size(); ++i) {
+            if (VERTICES_TO_EDGE(ref_edges[i].first, ref_edges[i].second) == target) {
+                ref_edges[i] = ref_edges.back();
+                ref_edges.pop_back();
+                break;
+            }
+        }
+    };
+
+    for (int r = 0; r < rounds; ++r) {
+        node_id_t a = dist(rng);
+        node_id_t b = dist(rng);
+        if (a == b) {
+            continue;
+        }
+
+        bool connected_ref = ref_connected(adj, a, b);
+        if (!connected_ref) {
+            lct.link(a, b, static_cast<int8_t>(coin(rng) % 7));
+            add_ref_edge(a, b);
+        } else if (!ref_edges.empty() && coin(rng) < 35) {
+            std::uniform_int_distribution<size_t> edge_pick(0, ref_edges.size() - 1);
+            const auto [u, v] = ref_edges[edge_pick(rng)];
+            lct.cut(u, v);
+            remove_ref_edge(u, v);
+        }
+
+        for (node_id_t u = 0; u < n; ++u) {
+            for (node_id_t v = static_cast<node_id_t>(u + 1); v < n; ++v) {
+                const bool want_connected = ref_connected(adj, u, v);
+                ASSERT_EQ(lct.connected(u, v), want_connected)
+                    << "connected mismatch after round " << r << " on pair (" << u << "," << v << ")";
+
+                const bool want_edge = adj[u].contains(v);
+                ASSERT_EQ(lct.has_edge(u, v), want_edge)
+                    << "has_edge mismatch after round " << r << " on pair (" << u << "," << v << ")";
+            }
+        }
+    }
+}
+
+TEST(LCTv2Correctness, ManualSmallBug) {
+    LinkCutTreeMaxAgg<int> lct(10);
+    lct.initialize_all_nodes();
+    lct.link(0, 1, 10);
+    lct.link(1, 2, 20);
+    lct.link(2, 3, 30);
+    
+    EXPECT_TRUE(lct.connected(0, 3));
+    EXPECT_TRUE(lct.has_edge(0, 1));
+    EXPECT_TRUE(lct.has_edge(1, 2));
+    EXPECT_FALSE(lct.has_edge(0, 2)) << "Path query returned wrong edges for a multi-hop path";
+}
+
+TEST(LCTv2Correctness, ExplorePathQueryBug) {
+    LinkCutTreeMaxAgg<int> lct(10);
+    lct.initialize_all_nodes();
+    lct.link(0, 1, 10);
+    lct.link(1, 2, 20);
+    lct.link(2, 3, 30);
+    
+    auto q = lct.path_query(0, 2);
+    std::cout << "path_query(0, 2) edge = (" << q.first.src << ", " << q.first.dst << "), max_weight = " << q.second << "\n";
+    
+    auto q2 = lct.path_query(0, 3);
+    std::cout << "path_query(0, 3) edge = (" << q2.first.src << ", " << q2.first.dst << "), max_weight = " << q2.second << "\n";
 }

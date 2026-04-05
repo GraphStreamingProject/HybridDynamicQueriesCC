@@ -24,7 +24,7 @@ long normal_refreshes = 0;
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed) {
+GraphTiers<TreeStrategy>::GraphTiers(node_id_t num_nodes, uint64_t seed) : query_forest(num_nodes, seed) {
 	// Algorithm parameters
 	uint32_t num_tiers = log2(num_nodes)/(log2(3)-1);
 
@@ -53,16 +53,18 @@ GraphTiers<TreeStrategy>::~GraphTiers() {}
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
+	transaction_log.push_back(update);
 	edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
 	uint32_t cut_start_tier = UINT32_MAX;
 	// Update the sketches of both endpoints of the edge in all tiers
-	if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
+	if (update.type == DELETE && query_forest.has_edge(update.edge.src, update.edge.dst)) {
 		// NOTE - since we know the edge exists (the query ett and lct are sync'd)
 		// we know that the path_query will return exactly the weight of the edge.
-		std::pair<Edge, int8_t> cut_edge_info = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+		std::pair<Edge, int8_t> cut_edge_info = query_forest.path_query(update.edge.src, update.edge.dst);
+		assert(cut_edge_info.second >= 0);
+		assert(static_cast<size_t>(cut_edge_info.second) < ett.size());
 		cut_start_tier = static_cast<uint32_t>(cut_edge_info.second);
-		link_cut_tree.cut(update.edge.src, update.edge.dst);
-		query_ett.cut(update.edge.src, update.edge.dst);
+		query_forest.cut(update.edge.src, update.edge.dst);
 		tree_ops_count++;
 	}
 	START(su);
@@ -70,6 +72,9 @@ void GraphTiers<TreeStrategy>::update(GraphUpdate update) {
 	// #pragma omp parallel for
 	for (uint32_t i = 0; i < ett.size(); i++) {
 		if (update.type == DELETE && cut_start_tier != UINT32_MAX && i >= cut_start_tier) {
+			if constexpr (requires(TreeStrategy tree, node_id_t a, node_id_t b) { tree._has_edge(a, b); }) {
+				assert(ett[i]._has_edge(update.edge.src, update.edge.dst));
+			}
 			ett[i].cut(update.edge.src, update.edge.dst);
 			ENDPOINT_CANARY("Cutting Tier " << i << " ETT With", update.edge.src, update.edge.dst);
 		}
@@ -178,27 +183,32 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 
 			// Check if a path exists between the edge's endpoints
 			START(lct1);
-			bool ab_connected = link_cut_tree.connected(a, b);
+			bool ab_connected = query_forest.connected(a, b);
 			STOP(lct_time, lct1);
 			if (ab_connected) {
 				START(lct2);
 				// Find the maximum tier edge on the path and what tier it first appeared on
-				std::pair<Edge, int8_t> max = link_cut_tree.path_query(a,b);
+				std::pair<Edge, int8_t> max = query_forest.path_query(a,b);
 				node_id_t c = max.first.src;
 				node_id_t d = max.first.dst;
+				assert(max.second >= 0);
+				assert(static_cast<size_t>(max.second) < ett.size());
+				assert(query_forest.has_edge(c, d));
 				STOP(lct_time, lct2);
 
 				// Remove the maximum tier edge on all paths where it exists
 				START(ett1);
 				// #pragma omp parallel for
 				for (uint32_t i = max.second; i < ett.size(); i++) {
+					if constexpr (requires(TreeStrategy tree, node_id_t x, node_id_t y) { tree._has_edge(x, y); }) {
+						assert(ett[i]._has_edge(c, d));
+					}
 					ett[i].cut(c,d);
 					ENDPOINT_CANARY("Cutting Tier " << i << " ETT With", c, d);
 				}
 				STOP(ett_time, ett1);
 				START(lct3);
-				link_cut_tree.cut(c,d);
-				query_ett.cut(c,d);
+				query_forest.cut(c,d);
 				tree_ops_count++;
 				STOP(lct_time, lct3);
 			}
@@ -212,8 +222,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			}
 			STOP(ett_time, ett2);
 			START(lct4);
-			link_cut_tree.link(a,b, tier+1);
-			query_ett.link(a,b);
+			query_forest.link(a,b, static_cast<int8_t>(tier+1));
 			tree_ops_count++;
 			STOP(lct_time, lct4);
 		}
@@ -226,14 +235,14 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 std::vector<std::set<node_id_t>> GraphTiers<TreeStrategy>::get_cc() {
-	return query_ett.cc_query();
+	return query_forest.cc_query();
 }
 
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 bool GraphTiers<TreeStrategy>::is_connected(node_id_t a, node_id_t b) {
-	return this->query_ett.is_connected(a, b);
+	return this->query_forest.is_connected(a, b);
 }
 
 template <typename TreeStrategy>
@@ -246,8 +255,8 @@ SpaceReport GraphTiers<TreeStrategy>::report_space_usage() {
         report.tier_reports[i].space_bytes = ett[i].space_usage_bytes();
         report.tier_reports[i].num_components = ett[i].num_components();
     }
-    report.query_tree_bytes = query_ett.space_usage_bytes();
-    report.top_level_lct_bytes = link_cut_tree.space_usage_bytes();
+	report.query_tree_bytes = query_forest.space_usage_bytes();
+	report.top_level_lct_bytes = query_forest.lct_space_usage_bytes();
     return report;
 }
 

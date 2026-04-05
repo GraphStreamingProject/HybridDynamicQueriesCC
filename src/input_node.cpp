@@ -6,7 +6,7 @@ long dt_operation_time = 0;
 long num_updates = 0;
 
 InputNode::InputNode(node_id_t num_nodes, uint32_t num_tiers, int batch_size, int seed) :
-    num_nodes(num_nodes), num_tiers(num_tiers), link_cut_tree(num_nodes), query_ett(num_nodes, 0, seed) {
+    num_nodes(num_nodes), num_tiers(num_tiers), query_forest(num_nodes, seed) {
     update_buffer = (UpdateMessage*) malloc(sizeof(UpdateMessage)*(batch_size+1));
     buffer_capacity = batch_size+1;
     UpdateMessage msg;
@@ -26,10 +26,10 @@ InputNode::~InputNode() {
 
 void InputNode::update(GraphUpdate update) {
     num_updates++;
-    if (!query_ett.is_initialized(update.edge.src))
-        query_ett.initialize_node(update.edge.src);
-    if (!query_ett.is_initialized(update.edge.dst))
-        query_ett.initialize_node(update.edge.dst);
+    if (!query_forest.is_initialized(update.edge.src))
+        query_forest.initialize_node(update.edge.src);
+    if (!query_forest.is_initialized(update.edge.dst))
+        query_forest.initialize_node(update.edge.dst);
     UpdateMessage update_message;
     update_message.update = update;
     update_buffer[buffer_size++] = update_message;
@@ -57,10 +57,10 @@ void InputNode::process_updates() {
         GraphUpdate update = update_buffer[i+1].update;
         update_buffer[i+1].cut_start_tier = UINT32_MAX;
         split_revert_buffer[i] = MAX_INT;
-        unlikely_if (update.type == DELETE && query_ett.has_edge(update.edge.src, update.edge.dst)) {
+        unlikely_if (update.type == DELETE && query_forest.has_edge(update.edge.src, update.edge.dst)) {
             // NOTE - since query ett and lct are sync'd, we know that the path_query will return 
             // exactly the weight of the edge, which is the tier it belongs to.
-            std::pair<Edge, int8_t> max_edge = link_cut_tree.path_query(update.edge.src, update.edge.dst);
+            std::pair<Edge, int8_t> max_edge = query_forest.path_query(update.edge.src, update.edge.dst);
             // note that max_edge.second HAS to be between 0 and num_tiers-1, 
             // since we assign edge weights based on tier in the LCT, so no need for extra checks here
             split_revert_buffer[i] = max_edge.second;
@@ -77,8 +77,7 @@ void InputNode::process_updates() {
         unlikely_if (update_buffer[i+1].cut_start_tier != UINT32_MAX) {
             // probably where most structural (spanning forest) deletes happen?
             // potentially - revisit
-            link_cut_tree.cut(update.edge.src, update.edge.dst);
-            query_ett.cut(update.edge.src, update.edge.dst);
+            query_forest.cut(update.edge.src, update.edge.dst);
             tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
             transaction_log.push_back(update);
@@ -98,8 +97,7 @@ void InputNode::process_updates() {
         GraphUpdate update = update_buffer[update_idx].update;
         // There could be a cut on a later update that needs to be rolled back
         unlikely_if (split_revert_buffer[update_idx-1] != MAX_INT) {
-            link_cut_tree.link(update.edge.src, update.edge.dst, split_revert_buffer[update_idx-1]);
-            query_ett.link(update.edge.src, update.edge.dst);
+            query_forest.link(update.edge.src, update.edge.dst, static_cast<int8_t>(split_revert_buffer[update_idx-1]));
             tree_ops_count++;
             // transaction_log.add(update.edge, generate_entry_dINSERT);
             // // TODO - not actually sure if update is an insert type
@@ -120,8 +118,7 @@ void InputNode::process_updates() {
         GraphUpdate update = update_buffer[update_idx].update;
         START(dt_operation_timer1);
         unlikely_if (update_buffer[update_idx].cut_start_tier != UINT32_MAX) {
-            link_cut_tree.cut(update.edge.src, update.edge.dst);
-            query_ett.cut(update.edge.src, update.edge.dst);
+            query_forest.cut(update.edge.src, update.edge.dst);
             tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
             transaction_log.push_back(update);
@@ -156,9 +153,9 @@ void InputNode::process_updates() {
                 // Process a LCT query message first
                 LctResponseMessage response_message;
                 // response_message.connected = link_cut_tree.find_root(update_message.endpoint1) == link_cut_tree.find_root(update_message.endpoint2);
-                response_message.connected = query_ett.is_connected(update_message.endpoint1, update_message.endpoint2);
+                response_message.connected = query_forest.is_connected(update_message.endpoint1, update_message.endpoint2);
                 if (response_message.connected) {
-                    std::pair<Edge, int8_t> max = link_cut_tree.path_query(update_message.endpoint1, update_message.endpoint2);
+                    std::pair<Edge, int8_t> max = query_forest.path_query(update_message.endpoint1, update_message.endpoint2);
                     response_message.cycle_edge = VERTICES_TO_EDGE(max.first.src, max.first.dst);
                     response_message.weight = max.second;
                 }
@@ -171,16 +168,15 @@ void InputNode::process_updates() {
                     bcast(&update_message, sizeof(EttUpdateMessage), rank);
                     START(dt_operation_timer2);
                     if (update_message.type == LINK) {
-                        link_cut_tree.link(update_message.endpoint1, update_message.endpoint2, update_message.start_tier);
-                        query_ett.link(update_message.endpoint1, update_message.endpoint2);
+                        query_forest.link(update_message.endpoint1, update_message.endpoint2,
+                                          static_cast<int8_t>(update_message.start_tier));
                         tree_ops_count++;
                         // transaction_log.add(update_message, INSERT);
                         transaction_log.push_back(
                             GraphUpdate{Edge{update_message.endpoint1, update_message.endpoint2}, INSERT});
                         break;
                     } else if (update_message.type == CUT) {
-                        link_cut_tree.cut(update_message.endpoint1, update_message.endpoint2);
-                        query_ett.cut(update_message.endpoint1, update_message.endpoint2);
+                        query_forest.cut(update_message.endpoint1, update_message.endpoint2);
                         tree_ops_count++;
                         // transaction_log.add(update_message, DELETE);
                         transaction_log.push_back(
@@ -216,12 +212,12 @@ void InputNode::process_all_updates() {
 
 bool InputNode::connectivity_query(node_id_t a, node_id_t b) {
     process_all_updates();
-	return query_ett.is_connected(a, b);
+    return query_forest.is_connected(a, b);
 }
 
 std::vector<std::set<node_id_t>> InputNode::cc_query() {
     process_all_updates();
-    return query_ett.cc_query();
+    return query_forest.cc_query();
 }
 
 void InputNode::end() {
@@ -250,7 +246,7 @@ SpaceReport InputNode::report_space_usage() {
         MPI_Recv(&report.tier_reports[i], sizeof(SpaceReportMessage), MPI_BYTE,
                  i + 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
-    report.query_tree_bytes = query_ett.space_usage_bytes();
-    report.top_level_lct_bytes = link_cut_tree.space_usage_bytes();
+    report.query_tree_bytes = query_forest.space_usage_bytes();
+    report.top_level_lct_bytes = query_forest.lct_space_usage_bytes();
     return report;
 }

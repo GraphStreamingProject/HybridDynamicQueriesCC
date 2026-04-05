@@ -11,11 +11,10 @@
 
 #include "euler_tour_tree.h"
 // #include "link_cut_tree.h"
-#include "lct_v2.h"
 #include "cutset_data_structure.h"
 #include "cutsets/ufo_cutset.h"
 #include "union_find_local.h"
-#include "sketchless_euler_tour_tree.h"
+#include "top_level_forest.h"
 // #include "parlay_hash/unordered_set.h"
 
 // Optional capability: only trees exposing these low-level methods can use the
@@ -46,8 +45,7 @@ class BatchTiers {
         // size_t maximum_batch_size = 1024;
         size_t granularity = 1 << 11;  // suggested number of tier-updates per thread 
         std::vector<TreeStrategy> ett;  // one ETT for each tier
-        LinkCutTreeMaxAgg<int8_t> link_cut_tree;
-        SketchlessEulerTourTree<> query_ett;
+        TopLevelForest query_forest;
         long tree_ops_count = 0;
         std::mutex lct_and_query_ett_lock;
         parlay::sequence<int32_t> _unique_update_ids;
@@ -110,16 +108,14 @@ class BatchTiers {
             for (auto &tree: ett) {
                 tree.initialize_node(u);
             }
-            query_ett.initialize_node(u);
-            link_cut_tree.initialize_node(u);
+            query_forest.initialize_node(u);
         }
 
         void uninitialize_node(node_id_t u) {
             for (auto &tree: ett) {
                 tree.uninitialize_node(u);
             }
-            query_ett.uninitialize_node(u);
-            link_cut_tree.uninitialize_node(u);
+            query_forest.uninitialize_node(u);
         }
         
         void initialize_all_nodes() {
@@ -127,8 +123,7 @@ class BatchTiers {
             for (auto &tree: ett) {
                 tree.initialize_all_nodes(num_nodes);
             }
-            query_ett.initialize_all_nodes(num_nodes);
-            link_cut_tree.initialize_all_nodes(num_nodes);
+            query_forest.initialize_all_nodes(num_nodes);
         }
         
         void flush_transaction_log() {
@@ -156,7 +151,7 @@ class BatchTiers {
         void update_batch(const parlay::sequence<GraphUpdate> &updates);
         
         bool is_tree_edge(node_id_t a, node_id_t b) {
-            return query_ett.has_edge(a, b);
+            return query_forest.has_edge(a, b);
         }
         
         void update(const GraphUpdate &update) {

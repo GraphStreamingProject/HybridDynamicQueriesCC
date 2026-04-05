@@ -8,7 +8,7 @@
 // #include "link_cut_tree.h"
 #include "cutsets/ufo_cutset.h"
 #include "lct_v2.h"
-#include "sketchless_euler_tour_tree.h"
+#include "top_level_forest.h"
 
 
 // Global variables for performance testing
@@ -41,13 +41,17 @@ class GraphTiers {
 private:
   std::vector<TreeStrategy> ett;  // one ETT for each tier
   std::vector<ComponentView> root_nodes;
-  LinkCutTreeMaxAgg<int8_t> link_cut_tree;
-  SketchlessEulerTourTree<> query_ett;
+  TopLevelForest query_forest;
   long tree_ops_count = 0;
+  std::vector<GraphUpdate> transaction_log;
   void refresh(GraphUpdate update, bool did_cut);
 
 public:
   GraphTiers(node_id_t num_nodes, uint64_t seed);
+  // Overload accepting (and ignoring) num_tiers/batch_size so GraphTiers
+  // satisfies the same constructor shape as BatchTiers / InputNode.
+  GraphTiers(node_id_t num_nodes, uint32_t /*num_tiers*/, int /*batch_size*/, uint64_t seed)
+      : GraphTiers(num_nodes, seed) {}
   ~GraphTiers();
 
   bool is_initialized(node_id_t u) {
@@ -58,28 +62,43 @@ public:
     for (auto &tree : ett) {
       tree.initialize_node(u);
     }
-    link_cut_tree.initialize_node(u);
-    query_ett.initialize_node(u);
+    query_forest.initialize_node(u);
   }
 
   void uninitialize_node(node_id_t u) {
     for (auto &tree : ett) {
       tree.uninitialize_node(u);
     }
-    link_cut_tree.uninitialize_node(u);
-    query_ett.uninitialize_node(u);
+    query_forest.uninitialize_node(u);
   }
 
   void initialize_all_nodes() {
     for (auto &tree : ett) {
       tree.initialize_all_nodes();
     }
-    link_cut_tree.initialize_all_nodes();
-    query_ett.initialize_all_nodes();
+    query_forest.initialize_all_nodes();
   }
 
   // apply an edge update
   void update(GraphUpdate update);
+
+  // DynamicSketchConcept satisfaction
+  void process_all_updates() {} // no-op: GraphTiers processes immediately
+
+  void drain_transaction_log(std::vector<GraphUpdate>& out) {
+    if (!transaction_log.empty()) {
+      out.insert(out.end(), transaction_log.begin(), transaction_log.end());
+      transaction_log.clear();
+    }
+  }
+
+  size_t space_usage_bytes() {
+    size_t total = sizeof(GraphTiers<TreeStrategy>);
+    for (auto& tree : ett) {
+      total += tree.space_usage_bytes();
+    }
+    return total;
+  }
 
   // query for the connected components of the graph
   std::vector<std::set<node_id_t>> get_cc();

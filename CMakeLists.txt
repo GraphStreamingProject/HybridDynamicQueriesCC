@@ -15,6 +15,13 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 option(USE_RESIZEABLE_SKETCH "Use ResizeableSketchColumn for test targets" OFF)
 option(USE_PARALLEL_HYBRID "Use ParallelConnectivityManager instead of SerialConnectivityManager for hybrid benchmarks" OFF)
+option(USE_SKETCHLESS_QUERY_ETT "Use SketchlessEulerTourTree for connectivity queries (otherwise use LCT-backed query view)" ON)
+
+if(USE_SKETCHLESS_QUERY_ETT)
+  add_compile_definitions(USE_SKETCHLESS_QUERY_ETT=1)
+else()
+  add_compile_definitions(USE_SKETCHLESS_QUERY_ETT=0)
+endif()
 
 # Make the default build type Release. If user or another
 # project sets a different value than use that
@@ -338,7 +345,7 @@ if(BENCH_ALL)
     endforeach()
   endforeach()
 else()
-  # Default: MPI × {UFO, LCT, ETT} × {fixed, resizeable}, pure cupcake + hybrid
+  # Default: MPI + Graph tiers × {UFO, LCT, ETT} × {fixed, resizeable}, pure cupcake + hybrid
   add_bench_targets(mpi_ufo_fixed              MPI_TIERS UFO 0 0)
   add_bench_targets(mpi_lct_fixed              MPI_TIERS LCT 0 0)
   add_bench_targets(mpi_ett_fixed              MPI_TIERS ETT 0 0)
@@ -352,6 +359,21 @@ else()
   add_bench_targets(mpi_ufo_resizeable_hybrid   MPI_TIERS UFO 1 1)
   add_bench_targets(mpi_lct_resizeable_hybrid   MPI_TIERS LCT 1 1)
   add_bench_targets(mpi_ett_resizeable_hybrid   MPI_TIERS ETT 1 1)
+
+  # Graph Tiers (shared-memory)
+  # add_bench_targets(graph_ufo_fixed             GRAPH_TIERS UFO 0 0)
+  # add_bench_targets(graph_lct_fixed             GRAPH_TIERS LCT 0 0)
+  # add_bench_targets(graph_ett_fixed             GRAPH_TIERS ETT 0 0)
+  # add_bench_targets(graph_ufo_fixed_hybrid      GRAPH_TIERS UFO 1 0)
+  # add_bench_targets(graph_lct_fixed_hybrid      GRAPH_TIERS LCT 1 0)
+  # add_bench_targets(graph_ett_fixed_hybrid      GRAPH_TIERS ETT 1 0)
+
+  # add_bench_targets(graph_ufo_resizeable        GRAPH_TIERS UFO 0 1)
+  # add_bench_targets(graph_lct_resizeable        GRAPH_TIERS LCT 0 1)
+  # add_bench_targets(graph_ett_resizeable        GRAPH_TIERS ETT 0 1)
+  # add_bench_targets(graph_ufo_resizeable_hybrid GRAPH_TIERS UFO 1 1)
+  # add_bench_targets(graph_lct_resizeable_hybrid GRAPH_TIERS LCT 1 1)
+  # add_bench_targets(graph_ett_resizeable_hybrid GRAPH_TIERS ETT 1 1)
 
   # Add more one-liners here as needed, e.g.:
   # add_bench_targets(batch_ufo_fixed  BATCH_TIERS UFO 0 0)

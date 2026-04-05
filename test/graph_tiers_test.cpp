@@ -16,8 +16,8 @@
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
 // using GraphTierSystem = GraphTiers<EulerTourTree<DefaultSketchColumn>>;
-using GraphTierSystem = GraphTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
-// using GraphTierSystem = GraphTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
+// using GraphTierSystem = GraphTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
+using GraphTierSystem = GraphTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<EulerTourTree<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using GraphTierSystem = BatchTiers<ufo::CutsetUFOTree<DefaultSketchColumn>>;
