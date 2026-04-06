@@ -276,27 +276,22 @@ for stream_file in "${STREAM_FILES[@]}"; do
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 1200 --auto-build
 
-        # 2. Hybrid with Threshold 2500
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --hybrid-threshold 2500 --auto-build
-
-        # 3. Hybrid with Threshold 500
+        # 2. Hybrid with Threshold 500
         register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 500 --auto-build
 
-        # 4. Hybrid with Threshold 250
+        # 3. Hybrid with Threshold 250
         register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --hybrid --hybrid-threshold 250 --auto-build
 
-        # 5. Pure Sketch
+        # 4. Pure Sketch
         register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
             --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
             --auto-build
 
-        # 6. Pure CF (always runs regardless of --mpi-algo)
+        # 5. Pure CF (always runs regardless of --mpi-algo)
         register_config --algo cf \
             --stream "$stream_file" --output-dir "$output_dir" --auto-build
     done
