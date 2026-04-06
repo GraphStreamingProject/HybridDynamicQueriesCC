@@ -194,6 +194,11 @@ class BatchTierNode {
   bool _found_isolation = false;
   std::vector<IsolationCandidate> _cached_candidates;
 
+  // Memoize node→representative for LCT in non-LAZY mode.
+  // Keyed by raw Node* (as void*), valued by ComponentID.
+  // Only populated when TreeStrategy is CutsetLCT and not in LAZY mode.
+  absl::flat_hash_map<void*, size_t> rep_memo_;
+
   void initialize_node(node_id_t u)  { ett.initialize_node(u); }
   void uninitialize_node(node_id_t u){ ett.uninitialize_node(u); }
   void initialize_all_nodes(node_id_t n) { ett.initialize_all_nodes(n); }

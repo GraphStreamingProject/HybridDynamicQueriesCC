@@ -150,8 +150,8 @@ public:
 
     static size_t query_budget_steps() {
         if (sketch_len <= 1) return 0;
-        // approx 4 * log(num vertices)
-        return 2 * (std::bit_width(static_cast<size_t>(sketch_len)) - 1);
+        // approx 8 * log(num vertices)
+        return 4 * (std::bit_width(static_cast<size_t>(sketch_len)) - 1);
     }
 
     Node<SketchClass>* representative_for_query(Node<SketchClass>* node) {

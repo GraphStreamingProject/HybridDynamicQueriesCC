@@ -3,6 +3,12 @@
 
 #include <cassert>
 
+namespace {
+  template<typename T> struct is_cutset_lct : std::false_type {};
+  template<typename S, typename C>
+  struct is_cutset_lct<cutset_lct::CutsetLCT<S, C>> : std::true_type {};
+}
+
 // ============================================================================
 //  BatchTierNode implementation
 // ============================================================================
@@ -79,23 +85,44 @@ void BatchTierNode<TreeStrategy>::deduplicate_components() {
   component_map.reserve(active_vertices.size());
   component_keys.reserve(active_vertices.size()); // Assuming full un-uniqueness for reserve speed
 
-  for (node_id_t v : active_vertices) {
-    ComponentView cv = ett.component_view(v);
-    size_t cid = static_cast<size_t>(cv.key());
-    
-    auto [it, inserted] = component_map.try_emplace(cid);
-    if (!inserted) continue;
-    
-    component_keys.push_back(cid);
+  // Memoize node→representative for LCT in non-LAZY mode.
+  // Multiple vertices sharing the same physical root can skip repeated representative walks.
+  constexpr bool use_rep_memo =
+      is_cutset_lct<TreeStrategy>::value && (LCT_QUERY_MODE != cutset_lct::LCT_QUERY_MODE_LAZY);
+  // constexpr bool use_rep_memo = false;
+  if constexpr (use_rep_memo) {
+      rep_memo_.clear();
+  }
 
-    ComponentInfo& info = it->second;
-    info.rep_vertex = v;          // Save the actual node_id_t
-    info.my_size = cv.size();
-    info.next_size = 0;
-    
-    SketchSample<vec_t> sample = cv.sketch().sample();
-    info.sample_result = sample.result;
-    info.sampled_edge = sample.idx;
+  for (node_id_t v : active_vertices) {
+      ComponentView cv = ett.component_view(v);
+      size_t cid;
+      if constexpr (use_rep_memo) {
+          void* memo_key = static_cast<void*>(cv.node);
+          auto [memo_it, memo_inserted] = rep_memo_.try_emplace(memo_key, size_t{0});
+          if (!memo_inserted) {
+              cid = memo_it->second;
+          } else {
+              cid = static_cast<size_t>(cv.key());
+              memo_it->second = cid;
+          }
+      } else {
+          cid = static_cast<size_t>(cv.key());
+      }
+
+      auto [it, inserted] = component_map.try_emplace(cid);
+      if (!inserted) continue;
+
+      component_keys.push_back(cid);
+
+      ComponentInfo& info = it->second;
+      info.rep_vertex = v;  // Save the actual node_id_t
+      info.my_size = cv.size();
+      info.next_size = 0;
+
+      SketchSample<vec_t> sample = cv.sketch().sample();
+      info.sample_result = sample.result;
+      info.sampled_edge = sample.idx;
   }
 }
 
