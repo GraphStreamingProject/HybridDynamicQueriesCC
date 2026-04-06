@@ -16,11 +16,23 @@ set(CMAKE_CXX_EXTENSIONS ON)
 option(USE_RESIZEABLE_SKETCH "Use ResizeableSketchColumn for test targets" OFF)
 option(USE_PARALLEL_HYBRID "Use ParallelConnectivityManager instead of SerialConnectivityManager for hybrid benchmarks" OFF)
 option(USE_SKETCHLESS_QUERY_ETT "Use SketchlessEulerTourTree for connectivity queries (otherwise use LCT-backed query view)" ON)
+set(LCT_QUERY_MODE "EAGER" CACHE STRING "LCT query mode: EAGER, LAZY, WORST_CASE")
+set_property(CACHE LCT_QUERY_MODE PROPERTY STRINGS EAGER LAZY WORST_CASE)
 
 if(USE_SKETCHLESS_QUERY_ETT)
   add_compile_definitions(USE_SKETCHLESS_QUERY_ETT=1)
 else()
   add_compile_definitions(USE_SKETCHLESS_QUERY_ETT=0)
+endif()
+
+if(LCT_QUERY_MODE STREQUAL "EAGER")
+  add_compile_definitions(LCT_QUERY_MODE=0)
+elseif(LCT_QUERY_MODE STREQUAL "LAZY")
+  add_compile_definitions(LCT_QUERY_MODE=1)
+elseif(LCT_QUERY_MODE STREQUAL "WORST_CASE")
+  add_compile_definitions(LCT_QUERY_MODE=2)
+else()
+  message(FATAL_ERROR "Invalid LCT_QUERY_MODE='${LCT_QUERY_MODE}'. Expected EAGER, LAZY, or WORST_CASE.")
 endif()
 
 # Make the default build type Release. If user or another

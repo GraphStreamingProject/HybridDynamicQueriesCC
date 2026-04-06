@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cassert>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -20,6 +21,18 @@ namespace cutset_lct {
 
 using namespace ufo;
 
+// LCT_QUERY_MODE is set by CMake:
+//   0 = EAGER   — full splay on every query (always correct aggregates)
+//   1 = LAZY    — read-only parent walk (no structural mutation)
+//   2 = WORST_CASE — read-only with budget, fallback to eager splay
+#ifndef LCT_QUERY_MODE
+#define LCT_QUERY_MODE 0
+#endif
+
+static constexpr int LCT_QUERY_MODE_EAGER      = 0;
+static constexpr int LCT_QUERY_MODE_LAZY        = 1;
+static constexpr int LCT_QUERY_MODE_WORST_CASE  = 2;
+
 template<typename SketchClass> requires(SketchColumnConcept<SketchClass, vec_t>)
 class Node;
 
@@ -34,11 +47,12 @@ public:
 
     struct ComponentView {
         Node<SketchClass>* representative = nullptr;
+        size_t query_budget_steps = 0;
 
         ComponentView() = default;
 
-        ComponentView(Node<SketchClass>* representative)
-            : representative(representative) {}
+        ComponentView(Node<SketchClass>* representative, size_t budget)
+            : representative(representative), query_budget_steps(budget) {}
 
         ComponentID key() const {
             assert(representative != nullptr);
@@ -47,13 +61,35 @@ public:
 
         uint32_t size() const {
             assert(representative != nullptr);
-            Node<SketchClass>* live_root = representative->get_root();
+            Node<SketchClass>* live_root = nullptr;
+            if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_EAGER) {
+                live_root = representative->get_root();
+            } else if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_LAZY) {
+                live_root = representative->get_root_read_only();
+            } else {
+                bool exceeded_budget = false;
+                live_root = representative->get_root_read_only_with_limit(query_budget_steps, exceeded_budget);
+                if (exceeded_budget) {
+                    live_root = representative->get_root();
+                }
+            }
             return live_root->weight;
         }
 
         SketchClass& sketch() const {
             assert(representative != nullptr);
-            Node<SketchClass>* live_root = representative->get_root();
+            Node<SketchClass>* live_root = nullptr;
+            if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_EAGER) {
+                live_root = representative->get_root();
+            } else if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_LAZY) {
+                live_root = representative->get_root_read_only();
+            } else {
+                bool exceeded_budget = false;
+                live_root = representative->get_root_read_only_with_limit(query_budget_steps, exceeded_budget);
+                if (exceeded_budget) {
+                    live_root = representative->get_root();
+                }
+            }
             return live_root->sketch_agg;
         }
     };
@@ -106,11 +142,47 @@ public:
         return component_view(u).key();
     }
 
+    static size_t query_budget_steps() {
+        if (sketch_len <= 1) return 0;
+        // approx 4 * log(num vertices)
+        return 2 * (std::bit_width(static_cast<size_t>(sketch_len)) - 1);
+    }
+
+    Node<SketchClass>* representative_for_query(Node<SketchClass>* node) {
+        if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_EAGER) {
+            return node->get_representative();
+        } else if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_LAZY) {
+            return node->get_representative_read_only();
+        } else {
+            bool exceeded_budget = false;
+            Node<SketchClass>* rep = node->get_representative_read_only_with_limit(query_budget_steps(), exceeded_budget);
+            if (exceeded_budget) {
+                return node->get_representative();
+            }
+            return rep;
+        }
+    }
+
     ComponentView component_view(node_id_t u) {
         ensure_initialized(u);
         Node<SketchClass>* node = &lct_node(u);
-        Node<SketchClass>* representative = node->get_representative();
-        return ComponentView{representative};
+        Node<SketchClass>* representative = representative_for_query(node);
+        return ComponentView{representative, query_budget_steps()};
+    }
+
+    bool is_connected_read_only(vertex_t u, vertex_t v) const {
+        assert(in_bounds(u) && in_bounds(v));
+        if constexpr (!std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            auto it_u = verts.find(static_cast<node_id_t>(u));
+            auto it_v = verts.find(static_cast<node_id_t>(v));
+            if (it_u == verts.end() || it_v == verts.end()) return false;
+            return it_u->second->get_representative_read_only() == it_v->second->get_representative_read_only();
+        } else {
+            // For vector container we need const access
+            Node<SketchClass>* nu = const_cast<Node<SketchClass>*>(&lct_node_const(u));
+            Node<SketchClass>* nv = const_cast<Node<SketchClass>*>(&lct_node_const(v));
+            return nu->get_representative_read_only() == nv->get_representative_read_only();
+        }
     }
 
     bool is_initialized(node_id_t u) {
@@ -153,6 +225,27 @@ public:
             assert(verts.find(u) != verts.end());
             return *verts[u];
         }
+    }
+
+    const Node<SketchClass>& lct_node_const(node_id_t u) const {
+        if constexpr (std::is_same_v<Container, std::vector<Node<SketchClass>>>) {
+            assert(u < verts.size());
+            return verts[u];
+        } else {
+            auto it = verts.find(u);
+            assert(it != verts.end());
+            return *it->second;
+        }
+    }
+
+    uint32_t get_size_read_only(node_id_t u) const {
+        assert(in_bounds(u));
+        return lct_node_const(u).get_root_read_only()->weight;
+    }
+
+    const SketchClass& get_sketch_read_only(node_id_t u) const {
+        assert(in_bounds(u));
+        return lct_node_const(u).get_root_read_only()->sketch_agg;
     }
 
     size_t space();
@@ -226,7 +319,10 @@ bool CutsetLCT<SketchClass, Container>::is_connected(vertex_t u, vertex_t v) {
             return false;
         }
     }
-    return lct_node(u).get_representative() == lct_node(v).get_representative();
+    if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_LAZY) {
+        return is_connected_read_only(u, v);
+    }
+    return representative_for_query(&lct_node(u)) == representative_for_query(&lct_node(v));
 }
 
 template<typename SketchClass, typename Container> requires(SketchColumnConcept<SketchClass, vec_t>)
@@ -243,10 +339,43 @@ typename CutsetLCT<SketchClass, Container>::ComponentView
 CutsetLCT<SketchClass, Container>::update_sketch(vertex_t v, const ColumnEntryDelta& delta) {
     assert(in_bounds(v));
     ensure_initialized(static_cast<node_id_t>(v));
-    Node<SketchClass>* curr = &lct_node(v);
-    while (curr) {
-        curr->sketch_agg.apply_entry_delta(delta);
-        curr = curr->parent;
+
+    if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_WORST_CASE) {
+        // Two-pass approach:
+        // Pass 1: count path length and prefetch sketches.
+        Node<SketchClass>* node = &lct_node(v);
+        size_t budget = query_budget_steps();
+        size_t path_len = 0;
+        Node<SketchClass>* curr = node;
+        while (curr) {
+            curr->sketch_agg.prefetch();
+            ++path_len;
+            curr = curr->parent;
+        }
+
+        if (path_len > budget) {
+            // Path too long — do an eager splay to restructure, then walk.
+            node->get_representative();
+        }
+
+        // Pass 2: apply deltas along the (potentially restructured) path.
+        curr = node;
+        while (curr) {
+            curr->sketch_agg.apply_entry_delta(delta);
+            curr = curr->parent;
+        }
+    } else {
+        // EAGER and LAZY: simple parent walk.
+        Node<SketchClass>* curr = &lct_node(v);
+        while (curr) {
+            curr->sketch_agg.apply_entry_delta(delta);
+            curr = curr->parent;
+        }
+    }
+
+    if constexpr (LCT_QUERY_MODE == LCT_QUERY_MODE_LAZY) {
+        Node<SketchClass>* rep = lct_node(v).get_representative_read_only();
+        return ComponentView{rep, query_budget_steps()};
     }
     return component_view(static_cast<node_id_t>(v));
 }
@@ -360,6 +489,73 @@ public:
     void link(Node* child);
     void cut(Node* neighbor);
     void evert(); // reroot
+
+    Node* get_root_read_only() {
+        Node* curr = this;
+        while (curr->parent) curr = curr->parent;
+        return curr;
+    }
+    const Node* get_root_read_only() const {
+        const Node* curr = this;
+        while (curr->parent) curr = curr->parent;
+        return curr;
+    }
+    Node* get_representative_read_only() {
+        // Walk to absolute root of the splay forest
+        Node* curr = this;
+        while (curr->parent) curr = curr->parent;
+        // Walk to leftmost node, tracking cumulative flip without mutating
+        bool flipped = false;
+        while (true) {
+            flipped ^= curr->flip;
+            Node* left = flipped ? curr->children[1] : curr->children[0];
+            if (!left) break;
+            curr = left;
+        }
+        return curr;
+    }
+    Node* get_representative_read_only_with_limit(size_t max_steps, bool& exceeded_budget) {
+        // Walk to absolute root of the splay forest
+        Node* curr = this;
+        size_t steps = 0;
+        while (curr->parent) {
+            if (steps >= max_steps) {
+                exceeded_budget = true;
+                return nullptr;
+            }
+            curr = curr->parent;
+            ++steps;
+        }
+        // Walk to leftmost node, tracking cumulative flip without mutating
+        bool flipped = false;
+        while (true) {
+            flipped ^= curr->flip;
+            Node* left = flipped ? curr->children[1] : curr->children[0];
+            if (!left) break;
+            if (steps >= max_steps) {
+                exceeded_budget = true;
+                return nullptr;
+            }
+            curr = left;
+            ++steps;
+        }
+        exceeded_budget = false;
+        return curr;
+    }
+    Node* get_root_read_only_with_limit(size_t max_steps, bool& exceeded_budget) {
+        Node* curr = this;
+        size_t steps = 0;
+        while (curr->parent) {
+            if (steps >= max_steps) {
+                exceeded_budget = true;
+                return curr;
+            }
+            curr = curr->parent;
+            ++steps;
+        }
+        exceeded_budget = false;
+        return curr;
+    }
  
     size_t space() {
         size_t mem = sizeof(Node<SketchClass>);
