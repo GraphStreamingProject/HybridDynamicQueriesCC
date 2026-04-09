@@ -4,6 +4,8 @@
 #include <parlay/io.h>
 #include <parlay/primitives.h>
 #include <parlay/sequence.h>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <algorithm>
 #include "types.h"
@@ -231,6 +233,35 @@ struct graph_utils {
           parlay::to_sequence(edges.cut(offset[i], offset[i + 1])),
           [=](auto v) { return i < v; });
     });
+  }
+
+  /// True if \p filename matches the binary symmetric CSR layout used by break_sym_graph_from_bin:
+  /// three native \c size_t header fields; the third equals total file size and the CSR byte layout.
+  static bool is_binary_sym_graph_file(const std::string& filename) {
+    std::error_code ec;
+    const std::uintmax_t file_size = std::filesystem::file_size(filename, ec);
+    if (ec || file_size < 3 * sizeof(size_t)) return false;
+    std::ifstream ifs(filename, std::ios::binary);
+    if (!ifs) return false;
+    size_t num_vertices = 0, num_edges = 0, sizes = 0;
+    ifs.read(reinterpret_cast<char*>(&num_vertices), sizeof(size_t));
+    ifs.read(reinterpret_cast<char*>(&num_edges), sizeof(size_t));
+    ifs.read(reinterpret_cast<char*>(&sizes), sizeof(size_t));
+    if (!ifs) return false;
+    // Same layout check as break_sym_graph_from_bin's assert.
+    const size_t expected_sizes =
+        (num_vertices + 1) * 8 + num_edges * 4 + 3 * 8;
+    if (sizes != expected_sizes) return false;
+    if (file_size != static_cast<std::uintmax_t>(sizes)) return false;
+    if (num_vertices == 0) return false;
+    return true;
+  }
+
+  /// Load a static graph from file: binary CSR (\ref break_sym_graph_from_bin) or Parlay text (\ref read_graph_from_file).
+  static graph read_static_graph_auto(const std::string& filename) {
+    if (is_binary_sym_graph_file(filename))
+      return break_sym_graph_from_bin(filename);
+    return read_graph_from_file(filename);
   }
 
 };

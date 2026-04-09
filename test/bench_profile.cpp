@@ -7,8 +7,10 @@
  * Runtime parameters (CLI):
  *   <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N]
  *                 [--output-dir dir] [--report-interval N]
+ *                 [--static-graph] [--static] [--do-deletions]
  */
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -17,8 +19,10 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "binary_graph_stream.h"
+#include "utils/graph_util.h"
 #include "util.h"
 
 // Include all possible backends
@@ -160,6 +164,8 @@ struct ProfileConfig {
     int move_to_sketch = 0;
     std::string output_dir = "results/profile";
     long report_interval = 1000000;
+    bool static_graph = false;
+    bool do_deletions = false;
 };
 
 static ProfileConfig parse_args(int argc, char** argv) {
@@ -168,7 +174,8 @@ static ProfileConfig parse_args(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] "
-                     "[--output-dir dir] [--report-interval N]"
+                     "[--output-dir dir] [--report-interval N] "
+                     "[--static-graph] [--static] [--do-deletions]"
                   << std::endl;
         exit(1);
     }
@@ -183,6 +190,8 @@ static ProfileConfig parse_args(int argc, char** argv) {
         else if (arg == "--move-to-sketch" && i + 1 < argc) cfg.move_to_sketch = std::atoi(argv[++i]);
         else if (arg == "--output-dir" && i + 1 < argc) cfg.output_dir = argv[++i];
         else if (arg == "--report-interval" && i + 1 < argc) cfg.report_interval = std::atol(argv[++i]);
+        else if (arg == "--static-graph" || arg == "--static") cfg.static_graph = true;
+        else if (arg == "--do-deletions") cfg.do_deletions = true;
     }
     return cfg;
 }
@@ -205,6 +214,9 @@ int main(int argc, char** argv) {
     int world_rank, world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    const bool is_rank_0 = (world_rank == 0);
+#else
+    const bool is_rank_0 = true;
 #endif
 
     ProfileConfig cfg = parse_args(argc, argv);
@@ -215,23 +227,43 @@ int main(int argc, char** argv) {
     std::string stream_basename = basename_of(cfg.stream_path);
     std::string out_dir = cfg.output_dir;
 
-#if NEEDS_MPI
-    int do_mkdir = 0;
-  #if NEEDS_MPI
-    do_mkdir = (world_rank == 0) ? 1 : 0;
-  #endif
-    if (do_mkdir)
-#endif
-    {
+    if (is_rank_0) {
         std::filesystem::create_directories(out_dir);
     }
 
     std::string space_file = out_dir + "/" + stream_basename + "_space.tsv";
     std::string summary_file = out_dir + "/" + stream_basename + "_summary.tsv";
 
-    BinaryGraphStream stream(cfg.stream_path, 100000);
-    node_id_t num_nodes = stream.nodes();
-    long edgecount = stream.edges();
+    node_id_t num_nodes = 0;
+    long edgecount = 0;
+    BinaryGraphStream* stream_ptr = nullptr;
+    std::vector<std::pair<node_id_t, node_id_t>> static_edges;
+
+    if (is_rank_0) {
+        if (!cfg.static_graph) {
+            stream_ptr = new BinaryGraphStream(cfg.stream_path, 100000);
+            num_nodes = stream_ptr->nodes();
+            edgecount = stream_ptr->edges();
+        } else {
+            auto G = ufo::graph_utils::read_static_graph_auto(cfg.stream_path);
+            auto E = parlay::remove_duplicates_ordered(
+                ufo::graph_utils::to_edges(G),
+                [&](ufo::graph_utils::edge a, ufo::graph_utils::edge b) {
+                    if (a.first == b.first) return a.second < b.second;
+                    return a.first < b.first;
+                });
+            num_nodes = static_cast<node_id_t>(G.size());
+            edgecount = static_cast<long>(E.size());
+            static_edges.reserve(E.size());
+            for (size_t i = 0; i < E.size(); i++) {
+                static_edges.push_back({E[i].first, E[i].second});
+            }
+        }
+    }
+
+#if NEEDS_MPI
+    bcast(&num_nodes, sizeof(node_id_t), 0);
+#endif
 
     // Resolve defaults
     double hf = (cfg.height_factor > 0) ? cfg.height_factor : 1.0 / log2(log2(num_nodes));
@@ -269,37 +301,77 @@ int main(int argc, char** argv) {
 #endif
 #endif
 
+    const long profile_total_ops =
+        cfg.static_graph ? (edgecount * (cfg.do_deletions ? 2 : 1)) : edgecount;
+
     // Lambda for the profiling loop (shared between shmem and MPI rank 0)
     auto run_profile = [&](auto& system) {
         int max_maximal_tier = -1;
         bool first_report = true;
         auto wall_start = std::chrono::high_resolution_clock::now();
 
-        for (long i = 0; i < edgecount; i++) {
-            GraphUpdate operation = stream.get_edge();
-            if (operation.type == 2) {
-                // Skip queries in profile mode — we only care about updates
-                continue;
+        auto emit_report = [&](long op_index) {
+            auto reports = get_space_reports(system);
+            write_space_report_tsv(reports, space_file, !first_report, op_index);
+            first_report = false;
+
+            int maximal = compute_first_maximal_tier(reports);
+            if (maximal > max_maximal_tier) {
+                max_maximal_tier = maximal;
+            }
+
+            std::cout << "Profile update " << op_index << "/" << profile_total_ops
+                      << " max_tier=" << max_maximal_tier
+                      << " tree_ops=" << system.get_num_tree_ops() << std::endl;
+        };
+
+        if (cfg.static_graph) {
+            std::mt19937 gen(seed);
+            std::shuffle(static_edges.begin(), static_edges.end(), gen);
+            for (long i = 0; i < edgecount; ++i) {
+                GraphUpdate operation;
+                operation.type = INSERT;
+                operation.edge.src = static_edges[static_cast<size_t>(i)].first;
+                operation.edge.dst = static_edges[static_cast<size_t>(i)].second;
+                system.update(operation);
+
+                if (i > 0 && (i % cfg.report_interval == 0 || i == edgecount - 1)) {
+                    emit_report(i);
+                }
             }
 #if IS_HYBRID
-            system.update(operation);
-#else
-            system.update(operation);
+            system.force_sync();
 #endif
+            if (cfg.do_deletions) {
+                std::shuffle(static_edges.begin(), static_edges.end(), gen);
+                for (long i = 0; i < edgecount; ++i) {
+                    GraphUpdate operation;
+                    operation.type = DELETE;
+                    operation.edge.src = static_edges[static_cast<size_t>(i)].first;
+                    operation.edge.dst = static_edges[static_cast<size_t>(i)].second;
+                    system.update(operation);
 
-            if (i > 0 && (i % cfg.report_interval == 0 || i == edgecount - 1)) {
-                auto reports = get_space_reports(system);
-                write_space_report_tsv(reports, space_file, !first_report, i);
-                first_report = false;
-
-                int maximal = compute_first_maximal_tier(reports);
-                if (maximal > max_maximal_tier) {
-                    max_maximal_tier = maximal;
+                    long j = edgecount + i;
+                    if (j > 0 && (j % cfg.report_interval == 0 || i == edgecount - 1)) {
+                        emit_report(j);
+                    }
                 }
+#if IS_HYBRID
+                system.force_sync();
+#endif
+            }
+        } else {
+            for (long i = 0; i < edgecount; i++) {
+                GraphUpdate operation = stream_ptr->get_edge();
+                if (operation.type == 2) {
+                    // Skip queries in profile mode — we only care about updates
+                    continue;
+                }
+                system.update(operation);
 
-                std::cout << "Profile update " << i << "/" << edgecount
-                          << " max_tier=" << max_maximal_tier
-                          << " tree_ops=" << system.get_num_tree_ops() << std::endl;
+                if (i > 0 && (i % cfg.report_interval == 0 || i == edgecount - 1)) {
+                    emit_report(i);
+                }
             }
         }
 
@@ -379,5 +451,6 @@ int main(int argc, char** argv) {
     MPI_Finalize();
 #endif
 
+    if (stream_ptr) delete stream_ptr;
     return 0;
 }

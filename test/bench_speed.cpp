@@ -181,7 +181,7 @@ static BenchConfig parse_args(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] [--output path.tsv]\n"
-                  << "        [--static-graph] [--do-deletions] [--num-queries Q]\n"
+                  << "        [--static-graph] [--static] [--do-deletions] [--num-queries Q]\n"
                   << "        [--speed-interval N]  (report time every N updates, default: disabled)"
                   << std::endl;
         exit(1);
@@ -196,7 +196,7 @@ static BenchConfig parse_args(int argc, char** argv) {
         else if (arg == "--recovery-size" && i + 1 < argc) cfg.recovery_size = std::atoi(argv[++i]);
         else if (arg == "--move-to-sketch" && i + 1 < argc) cfg.move_to_sketch = std::atoi(argv[++i]);
         else if (arg == "--output" && i + 1 < argc) cfg.output_path = argv[++i];
-        else if (arg == "--static-graph") cfg.static_graph = true;
+        else if (arg == "--static-graph" || arg == "--static") cfg.static_graph = true;
         else if (arg == "--do-deletions") cfg.do_deletions = true;
         else if (arg == "--num-queries" && i + 1 < argc) cfg.num_queries = std::stoull(argv[++i]);
         else if (arg == "--speed-interval" && i + 1 < argc) cfg.speed_interval = std::atol(argv[++i]);
@@ -381,7 +381,7 @@ int main(int argc, char** argv) {
             num_nodes = stream_ptr->nodes();
             edgecount = stream_ptr->edges();
         } else {
-            auto G = ufo::graph_utils::break_sym_graph_from_bin(cfg.stream_path);
+            auto G = ufo::graph_utils::read_static_graph_auto(cfg.stream_path);
             auto E = parlay::remove_duplicates_ordered(ufo::graph_utils::to_edges(G), [&] (ufo::graph_utils::edge a, ufo::graph_utils::edge b) {
                 if (a.first == b.first) return a.second < b.second;
                 return a.first < b.first;
