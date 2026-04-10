@@ -8,6 +8,7 @@
 #include <cstdlib>
 // #include <omp.h>
 #include "mpi_nodes.h"
+#include "mpi_batch_nodes.h"
 #include "binary_graph_stream.h"
 // #include "mat_graph_verifier.h"
 #include "graph_verifier.h"
@@ -20,12 +21,17 @@ const int DEFAULT_BATCH_SIZE = 100;
 const int DEFAULT_HYBRID_THRESHOLD = 100;
 const vec_t DEFAULT_SKETCH_ERR = 1;
 
-using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
+// using TierNodeSystem = TierNode<EulerTourTree<DefaultSketchColumn>>;
 // using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 // using TierNodeSystem = TierNode<ufo::CutsetUFOTree<DefaultSketchColumn>>;
 
-// using HybridManagerType = ParallelConnectivityManager<InputNode>;
+#if defined(HYBRID_USE_BATCH_MPI_TESTS) && HYBRID_USE_BATCH_MPI_TESTS
+using TierNodeSystem = BatchTierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
+using HybridManagerType = SerialConnectivityManager<BatchInputNode>;
+#else
+using TierNodeSystem = TierNode<cutset_lct::CutsetLCT<DefaultSketchColumn>>;
 using HybridManagerType = SerialConnectivityManager<InputNode>;
+#endif
 
 static long force_sync_interval() {
     const char* interval_env = std::getenv("FORCE_SYNC_INTERVAL");

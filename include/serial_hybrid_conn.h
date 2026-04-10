@@ -86,21 +86,47 @@ class SerialConnectivityManager {
             return num_cf_edges[vertex];
             // return count;
         }
-        
+
         inline void insert_to_sketch(node_id_t u, node_id_t v) {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
-            sketching_algo.update(GraphUpdate{Edge{u, v}, INSERT});
-            recovery_sketches[u]->update(v);
-            recovery_sketches[v]->update(u);
+            sketching_algo.update(GraphUpdate{Edge{src, dst}, INSERT});
+            auto it_u = recovery_sketches.find(u);
+            auto it_v = recovery_sketches.find(v);
+            if (it_u == recovery_sketches.end() || it_u->second == nullptr || it_v == recovery_sketches.end() || it_v->second == nullptr) {
+                std::cout
+                    << "MISSING RECOVERY SKETCH in insert_to_sketch: u=" << u
+                    << " v=" << v
+                    << " has_u=" << (it_u != recovery_sketches.end() && it_u->second != nullptr)
+                    << " has_v=" << (it_v != recovery_sketches.end() && it_v->second != nullptr)
+                    << " sketched_u=" << is_vertex_sketched(u)
+                    << " sketched_v=" << is_vertex_sketched(v)
+                    << std::endl;
+                std::abort();
+            }
+            it_u->second->update(v);
+            it_v->second->update(u);
             total_sketch_insertions++;
         }
         inline void delete_from_sketch(node_id_t u, node_id_t v) {
             node_id_t src = std::min(u, v);
             node_id_t dst = std::max(u, v);
-            sketching_algo.update(GraphUpdate{Edge{u, v}, DELETE});
-            recovery_sketches[u]->update(v);
-            recovery_sketches[v]->update(u);
+            sketching_algo.update(GraphUpdate{Edge{src, dst}, DELETE});
+            auto it_u = recovery_sketches.find(u);
+            auto it_v = recovery_sketches.find(v);
+            if (it_u == recovery_sketches.end() || it_u->second == nullptr || it_v == recovery_sketches.end() || it_v->second == nullptr) {
+                std::cout
+                    << "MISSING RECOVERY SKETCH in delete_from_sketch: u=" << u
+                    << " v=" << v
+                    << " has_u=" << (it_u != recovery_sketches.end() && it_u->second != nullptr)
+                    << " has_v=" << (it_v != recovery_sketches.end() && it_v->second != nullptr)
+                    << " sketched_u=" << is_vertex_sketched(u)
+                    << " sketched_v=" << is_vertex_sketched(v)
+                    << std::endl;
+                std::abort();
+            }
+            it_u->second->update(v);
+            it_v->second->update(u);
             total_sketch_deletions++;
         }
         
@@ -173,6 +199,7 @@ class SerialConnectivityManager {
             unlikely_if (!is_vertex_sketched(vertex)) {
                 return;
             }
+            // std::cout << "RECOVERY UNINITIALIZE for vertex " << vertex << std::endl;
             _is_vertex_sketched.erase(vertex);
             delete recovery_sketches[vertex];
             recovery_sketches.erase(vertex);
@@ -188,6 +215,7 @@ class SerialConnectivityManager {
                     }
                 }
             }
+            // std::cout << "SKETCH UNINITIALIZE for vertex " << vertex << std::endl;
             sketching_algo.uninitialize_node(vertex);
         }
         
@@ -196,13 +224,17 @@ class SerialConnectivityManager {
             // TODO - maybe get rid of this line, but rn we need it for correctness potentially:
             // sketching_algo.process_all_updates();
             for (auto &update: sketching_algo.get_transaction_log()) {
-                edge_id_t edge_id = concat_pairing_fn(update.edge.src, update.edge.dst);
+                node_id_t u = std::min(update.edge.src, update.edge.dst);
+                node_id_t v = std::max(update.edge.src, update.edge.dst);
+                edge_id_t edge_id = concat_pairing_fn(u, v);
                 if (update.type == DELETE) {
-                    remove_from_cf(update.edge.src, update.edge.dst);
+                    // std::cout << "TL: Deleting edge from CF: " << u << " " << v << std::endl;
+                    remove_from_cf(u, v);
                     edges_from_sketch.erase(edge_id);
                 }
                 else {
-                    insert_to_cf(update.edge.src, update.edge.dst);
+                    // std::cout << "TL: Inserting edge into CF: " << u << " " << v << std::endl;
+                    insert_to_cf(u, v);
                     edges_from_sketch.insert(edge_id);
                 }
             }
@@ -275,19 +307,15 @@ class SerialConnectivityManager {
             if (!_neighbors_buffer.empty()) {
                 // CF edges were removed and replacement sketch-forest commits are pending.
                 pending_connectivity_work = true;
-            }
+            }            // // TODO - there is still a bug with updating pending dense edges
+            // return false;
             // clear pending_num_dense_edges for this vertex
             num_pending_dense_edges[vertex_to_flush] = 0;
-            // apply the transaction log
-            // flush_transaction_log();
-            // TODO - just do this in reads for now.
-            // we should think about this
-                        
+            // transaction log applied on read:
+            // pending_connectivity_work = true is set. so that makes sure we do what we need to
         }
         
         bool check_and_perform_recovery(node_id_t vertex) {
-            // TODO - there is still a bug with updating pending dense edges
-            return false;
             /*
                 Assumes the vertex is sketched
                 Checks if the recovery sketch is sufficiently sparse
@@ -317,7 +345,18 @@ class SerialConnectivityManager {
             // then remove the vertex from neighbors' recovery structures
             for (vec_t &vec: recovery_attempt.recovered_indices) {
                 node_id_t other_vertex = (node_id_t)vec;
-                recovery_sketches[other_vertex]->update(vertex);
+                auto other_it = recovery_sketches.find(other_vertex);
+                if (other_it == recovery_sketches.end() || other_it->second == nullptr) {
+                    std::cout
+                        << "MISSING RECOVERY SKETCH in check_and_perform_recovery: vertex=" << vertex
+                        << " other_vertex=" << other_vertex
+                        << " has_other=" << (other_it != recovery_sketches.end() && other_it->second != nullptr)
+                        << " sketched_vertex=" << is_vertex_sketched(vertex)
+                        << " sketched_other=" << is_vertex_sketched(other_vertex)
+                        << std::endl;
+                    std::abort();
+                }
+                other_it->second->update(vertex);
             }
             // and flush the edges out of the sketching algo
             for (vec_t &vec: recovery_attempt.recovered_indices) {
@@ -331,6 +370,7 @@ class SerialConnectivityManager {
             // this has to happen here by current designs, since we only want to decrement
             // pending_dense_edges for edges that WERE NOT already part of the recovery process
             // std::cout << "Spooky: Uninitializing sketch for vertex " << vertex << std::endl;
+            sketching_algo.process_all_updates();
             uninitialize_vertex_sketch(vertex);
 
             // and apply the transaction log

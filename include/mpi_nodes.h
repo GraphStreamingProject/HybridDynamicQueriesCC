@@ -160,7 +160,7 @@ class TierNode {
   };
   void update_tier(GraphUpdate update);
   void ett_update_tier(EttUpdateMessage message);
-  void refresh_tier(RefreshMessage messsage);
+  void refresh_tier(RefreshMessage messsage, GraphUpdate current_update);
 public:
   TierNode(node_id_t num_nodes, uint32_t tier_num, uint32_t num_tiers, int batch_size, int seed);
   ~TierNode();

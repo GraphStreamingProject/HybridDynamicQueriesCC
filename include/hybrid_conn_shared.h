@@ -48,6 +48,7 @@ struct RecoveryCommand {
         ACTIVATE_VERTEX,
         DEACTIVATE_VERTEX,
         RECLAIM_VERTEX,
+        NOOP,
     };
 
     uint64_t seq_num;

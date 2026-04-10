@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <deque>
+#include <mutex>
 
 template <typename SketchAlgoClass = InputNode, typename RecoverySketchType = NodeRecoveryIBLTCascade> requires(DynamicSketchConcept<SketchAlgoClass>)
 class ParallelConnectivityManager {
@@ -133,9 +134,10 @@ private:
                 case SketchCommand::Type::DEACTIVATE_VERTEX:
                     // Flush any buffered edge updates that may reference this
                     // vertex before removing it from the query structures.
-                    // TODO - there should be a better way 
+                    // TODO - there should be a better way
                     sketching_algo.process_all_updates();
-                    // sketching_algo.uninitialize_node(cmd.node);
+                    sketching_algo.uninitialize_node(cmd.node);
+                    // std::cout << "SKETCH DEACTIVATE_VERTEX for vertex " << cmd.node << std::endl;
                     break;
                 case SketchCommand::Type::RECLAIM_VERTEX:
                     // Sketch-side reclaim is currently equivalent to deactivation.
@@ -228,6 +230,42 @@ private:
             recovery_size_override = recovery_size;
         }
 
+        bool recover_and_unsketch_vertex(node_id_t vertex, std::vector<node_id_t>& recovered_neighbors) {
+            std::lock_guard<std::mutex> lock(mu);
+            auto it = recovery_sketches.find(vertex);
+            if (it == recovery_sketches.end()) {
+                return false;
+            }
+
+            auto recovery_attempt = it->second->recover(true);
+            if (recovery_attempt.result == FAILURE || recovery_attempt.result == PARTIAL_RECOVERY) {
+                return false;
+            }
+
+            recovered_neighbors.clear();
+            recovered_neighbors.reserve(recovery_attempt.recovered_indices.size());
+
+            for (vec_t &vec : recovery_attempt.recovered_indices) {
+                node_id_t other_vertex = (node_id_t)vec;
+                recovered_neighbors.push_back(other_vertex);
+
+                // When unsketching this vertex, also remove incidence from each
+                // other endpoint's recovery sketch if it is currently active.
+                auto other_it = recovery_sketches.find(other_vertex);
+                if (other_it != recovery_sketches.end()) {
+                    other_it->second->update(vertex);
+                }
+            }
+
+            cancel_pending_retire(vertex);
+            // std::cout << "RECOVERY UNINITIALIZE for vertex " << vertex << std::endl;
+            approx_space_usage_bytes.fetch_sub(it->second->space_usage_bytes());
+            delete it->second;
+            recovery_sketches.erase(it);
+            active_vertices.fetch_sub(1);
+            return true;
+        }
+
     private:
         void reclaim_retired(uint64_t watermark) {
             while (!retired_vertices.empty() && retired_vertices.front().first <= watermark) {
@@ -261,6 +299,7 @@ private:
         }
 
         void handle_command(const RecoveryCommand& cmd) {
+            std::lock_guard<std::mutex> lock(mu);
             switch (cmd.type) {
                 case RecoveryCommand::Type::EDGE_UPDATE: {
                     Edge edge = inv_concat_pairing_fn(cmd.update);
@@ -296,6 +335,8 @@ private:
                 case RecoveryCommand::Type::RECLAIM_VERTEX:
                     reclaim_retired(cmd.seq_num);
                     break;
+                case RecoveryCommand::Type::NOOP:
+                    break;
             }
             processed_seq_num.store(cmd.seq_num);
         }
@@ -318,6 +359,7 @@ private:
         std::thread worker;
         std::atomic<bool> running{false};
         std::atomic<uint64_t> processed_seq_num{0};
+        mutable std::mutex mu;
 
         absl::flat_hash_map<node_id_t, RecoverySketchType*> recovery_sketches;
         std::deque<std::pair<uint64_t, node_id_t>> retired_vertices;
@@ -400,6 +442,16 @@ private:
 
         sketch_subsystem.enqueue(SketchCommand{seq, SketchCommand::Type::EDGE_UPDATE, GraphUpdate{Edge{src, dst}, DELETE}, 0});
         recovery_subsystem.enqueue(RecoveryCommand{seq, RecoveryCommand::Type::EDGE_UPDATE, concat_pairing_fn(src, dst), 0});
+        total_sketch_deletions++;
+    }
+
+    inline void enqueue_delete_from_sketch_only(node_id_t u, node_id_t v) {
+        node_id_t src = std::min(u, v);
+        node_id_t dst = std::max(u, v);
+        uint64_t seq = next_seq_num();
+
+        sketch_subsystem.enqueue(SketchCommand{seq, SketchCommand::Type::EDGE_UPDATE, GraphUpdate{Edge{src, dst}, DELETE}, 0});
+        recovery_subsystem.enqueue(RecoveryCommand{seq, RecoveryCommand::Type::NOOP, 0, 0});
         total_sketch_deletions++;
     }
 
@@ -565,9 +617,47 @@ public:
     }
 
     bool check_and_perform_recovery(node_id_t vertex) {
-        // TODO - actually perform the successful recovery (reinserting edges etc) 
-        // similar to SerialConnectivityManager if needed.
-        return false;
+        if (!is_vertex_sketched(vertex)) {
+            return false;
+        }
+
+        if (num_edges[vertex] > DENSE_THRESHOLD / 8) {
+            return false;
+        }
+
+        // Ensure both subsystems are fully caught up before attempting recovery.
+        sync_queues();
+
+        _neighbors_buffer.clear();
+        if (!recovery_subsystem.recover_and_unsketch_vertex(vertex, _neighbors_buffer)) {
+            return false;
+        }
+
+        // Keep driver-side bookkeeping and queued lifecycle updates in sync.
+        uninitialize_vertex_sketch(vertex);
+
+        // Remove recovered edges from sketch connectivity only.
+        for (node_id_t other_vertex : _neighbors_buffer) {
+            if (other_vertex != vertex) {
+                enqueue_delete_from_sketch_only(vertex, other_vertex);
+            }
+        }
+
+        pending_connectivity_work = true;
+
+        // Complete sketch + recovery command processing and apply sketch commits.
+        sync_queues();
+        flush_transaction_log();
+        last_flushed_sketch_seq = sketch_subsystem.processed_seq();
+        pending_connectivity_work = false;
+
+        for (node_id_t other_vertex : _neighbors_buffer) {
+            if (other_vertex != vertex) {
+                insert_to_cf(vertex, other_vertex);
+            }
+        }
+
+        return true;
     }
 
     inline void insert_to_cf(node_id_t src, node_id_t dst) {

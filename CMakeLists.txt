@@ -15,6 +15,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 option(USE_RESIZEABLE_SKETCH "Use ResizeableSketchColumn for test targets" OFF)
 option(USE_PARALLEL_HYBRID "Use ParallelConnectivityManager instead of SerialConnectivityManager for hybrid benchmarks" OFF)
+option(USE_HYBRID_BATCH_MPI_TESTS "Use BatchInputNode/BatchTierNode backend in hybrid_mpi_dynamicCC_tests" OFF)
 option(USE_SKETCHLESS_QUERY_ETT "Use SketchlessEulerTourTree for connectivity queries (otherwise use LCT-backed query view)" ON)
 set(LCT_QUERY_MODE "EAGER" CACHE STRING "LCT query mode: EAGER, LAZY, WORST_CASE")
 set_property(CACHE LCT_QUERY_MODE PROPERTY STRINGS EAGER LAZY WORST_CASE)
@@ -218,9 +219,20 @@ add_executable(hybrid_mpi_dynamicCC_tests
   src/euler_tour_tree.cpp
   src/sketchless_euler_tour_tree.cpp
   src/link_cut_tree.cpp
-  src/input_node.cpp
-  src/tier_node.cpp
 )
+if(USE_HYBRID_BATCH_MPI_TESTS)
+  target_sources(hybrid_mpi_dynamicCC_tests PRIVATE
+    src/batch_input_node.cpp
+    src/batch_tier_node.cpp
+  )
+  target_compile_definitions(hybrid_mpi_dynamicCC_tests PUBLIC HYBRID_USE_BATCH_MPI_TESTS=1)
+else()
+  target_sources(hybrid_mpi_dynamicCC_tests PRIVATE
+    src/input_node.cpp
+    src/tier_node.cpp
+  )
+  target_compile_definitions(hybrid_mpi_dynamicCC_tests PUBLIC HYBRID_USE_BATCH_MPI_TESTS=0)
+endif()
 target_compile_definitions(hybrid_mpi_dynamicCC_tests PUBLIC SKETCH_BUFFER_SIZE=${SKETCH_BUFFER_SIZE})
 target_include_directories(hybrid_mpi_dynamicCC_tests PUBLIC include ${MPI_C_INCLUDE_PATH})
 add_dependencies(hybrid_mpi_dynamicCC_tests GraphZeppelinVerifyCC dycon)

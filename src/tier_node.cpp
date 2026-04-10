@@ -177,7 +177,7 @@ void TierNode<TreeStrategy>::main() {
                     int source = (tier == start_tier) ? 0 : tier_num;
                     MPI_Recv(&refresh_message, sizeof(RefreshMessage), MPI_BYTE, source, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     if (tier != 0)
-                        refresh_tier(refresh_message);
+                        refresh_tier(refresh_message, update);
                     // Send a refresh message to the next tier
                     if (tier < num_tiers-1) {
                         RefreshEndpoint e1, e2;
@@ -234,7 +234,7 @@ void TierNode<TreeStrategy>::ett_update_tier(EttUpdateMessage message) {
 
 template <typename TreeStrategy>
 requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
-void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message) {
+void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message, GraphUpdate current_update) {
     const bool same_component = ett.is_connected(message.endpoints.first.v, message.endpoints.second.v);
     for (int endpoint_idx : {0, 1}) {
         if (same_component && endpoint_idx == 1) {
@@ -253,6 +253,19 @@ void TierNode<TreeStrategy>::refresh_tier(RefreshMessage message) {
         
         node_id_t a = (node_id_t)endpoint.sketch_query_result.idx;
         node_id_t b = (node_id_t)(endpoint.sketch_query_result.idx>>32);
+
+        // If a delete update samples its own edge as a replacement candidate,
+        // skip it: relinking the same just-deleted edge is never valid.
+        node_id_t sampled_u = std::min(a, b);
+        node_id_t sampled_v = std::max(a, b);
+        node_id_t update_u = std::min(current_update.edge.src, current_update.edge.dst);
+        node_id_t update_v = std::max(current_update.edge.src, current_update.edge.dst);
+        if (current_update.type == DELETE && sampled_u == update_u && sampled_v == update_v) {
+            EttUpdateMessage update_message;
+            update_message.type = NOT_ISOLATED;
+            bcast(&update_message, sizeof(EttUpdateMessage), tier_num+1);
+            continue;
+        }
         
         // Tell all other nodes an isolation was found
         EttUpdateMessage update_message;

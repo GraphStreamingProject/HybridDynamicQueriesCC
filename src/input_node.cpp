@@ -1,5 +1,7 @@
 #include "../include/mpi_nodes.h"
 
+#include <algorithm>
+
 
 long normal_refreshes = 0;
 long dt_operation_time = 0;
@@ -40,15 +42,64 @@ void InputNode::update(GraphUpdate update) {
 void InputNode::process_updates() {
     if (buffer_size == 1)
         return;
+    // Canonicalize same-edge updates within the batch.
+    // Even multiplicities cancel; odd multiplicities keep the last update
+    // type for that undirected edge.
+    {
+        const uint32_t raw_num_updates = buffer_size - 1;
+        std::vector<GraphUpdate> raw_updates;
+        raw_updates.reserve(raw_num_updates);
+        for (uint32_t i = 0; i < raw_num_updates; i++) {
+            GraphUpdate update = update_buffer[i + 1].update;
+            if (update.edge.src > update.edge.dst) {
+                std::swap(update.edge.src, update.edge.dst);
+            }
+            raw_updates.push_back(update);
+        }
+
+        std::stable_sort(raw_updates.begin(), raw_updates.end(),
+                         [](const GraphUpdate& lhs, const GraphUpdate& rhs) {
+                             if (lhs.edge.src != rhs.edge.src) {
+                                 return lhs.edge.src < rhs.edge.src;
+                             }
+                             return lhs.edge.dst < rhs.edge.dst;
+                         });
+
+        uint32_t canonical_count = 0;
+        size_t i = 0;
+        while (i < raw_updates.size()) {
+            size_t j = i + 1;
+            while (j < raw_updates.size() &&
+                   raw_updates[j].edge.src == raw_updates[i].edge.src &&
+                   raw_updates[j].edge.dst == raw_updates[i].edge.dst) {
+                j++;
+            }
+
+            const size_t run_len = j - i;
+            if ((run_len & 1) == 1) {
+                UpdateMessage msg;
+                msg.update = raw_updates[j - 1];
+                update_buffer[canonical_count + 1] = msg;
+                canonical_count++;
+            }
+            i = j;
+        }
+
+        buffer_size = static_cast<int>(canonical_count + 1);
+        if (buffer_size == 1) {
+            return;
+        }
+    }
     // BUFFER PRE-PROCESSING !
     // for every update; if we know it's isolated (adds new connectivity) info,
     // swap it to the front of the buffer
 
 
     uint32_t num_updates = buffer_size-1;
+    const size_t tx_log_start = transaction_log.size();
     // If less than 1/10 of the last updates are isolated use sliding window
     bool prev_strat = using_sliding_window;
-    // using_sliding_window = false;//(isolation_count<history_size/10) ? true : false;
+    using_sliding_window = false;//(isolation_count<history_size/10) ? true : false;
     // using_sliding_window = true;
     if (using_sliding_window != prev_strat)
         std::cout << "SWITCHED TO " << (using_sliding_window ? "SLIDING WINDOW" : "NORMAL STRAT") << std::endl;
@@ -92,6 +143,15 @@ void InputNode::process_updates() {
         buffer_size = 1;
         return;
     }
+    // Pre-cut emits provisional deletes for the full batch. Once isolation is
+    // found, only updates strictly before minimum_isolated_update are finalized
+    // at this point; suffix updates are replayed below.
+    transaction_log.resize(tx_log_start);
+    for (uint32_t i = 0; i + 1 < static_cast<uint32_t>(minimum_isolated_update); i++) {
+        if (split_revert_buffer[i] != MAX_INT) {
+            transaction_log.push_back(update_buffer[i + 1].update);
+        }
+    }
     // First undo all the link cut tree cuts we did after isolated update
     for (uint32_t update_idx = minimum_isolated_update; update_idx < num_updates+1; update_idx++) {
         GraphUpdate update = update_buffer[update_idx].update;
@@ -99,9 +159,8 @@ void InputNode::process_updates() {
         unlikely_if (split_revert_buffer[update_idx-1] != MAX_INT) {
             query_forest.link(update.edge.src, update.edge.dst, static_cast<int8_t>(split_revert_buffer[update_idx-1]));
             tree_ops_count++;
-            // transaction_log.add(update.edge, generate_entry_dINSERT);
-            // // TODO - not actually sure if update is an insert type
-            transaction_log.push_back(GraphUpdate{update.edge, INSERT});
+            // Rollback links are provisional and must not leak to the external
+            // transaction log consumed by the hybrid manager.
         }
     }
     // Update the isolation history
@@ -117,7 +176,9 @@ void InputNode::process_updates() {
     for (int update_idx = minimum_isolated_update; update_idx < end_update_idx; update_idx++) {
         GraphUpdate update = update_buffer[update_idx].update;
         START(dt_operation_timer1);
-        unlikely_if (update_buffer[update_idx].cut_start_tier != UINT32_MAX) {
+        // Re-evaluate delete cuts against the live forest state during replay.
+        // Precomputed cut_start_tier can be stale after rollback/refresh relinks.
+        unlikely_if (update.type == DELETE && query_forest.has_edge(update.edge.src, update.edge.dst)) {
             query_forest.cut(update.edge.src, update.edge.dst);
             tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
