@@ -3,12 +3,14 @@
 #include <cstddef>
 #include <iostream>
 #include <memory>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
 #include <skiplist.h>
 #include "sketch/sketch_concept.h"
 #include "sketch_interfacing.h"
+#include "default_containers.h"
 
 #include <absl/container/flat_hash_map.h>
 
@@ -335,7 +337,10 @@ using HashmapContainer = absl::flat_hash_map<node_id_t, EulerTourNode<DefaultSke
 
 template <typename SketchClass = DefaultSketchColumn, 
 // typename Container = std::vector<EulerTourNode<SketchClass>>>
-typename Container = absl::flat_hash_map<node_id_t, EulerTourNode<SketchClass>*>>
+typename Container = std::conditional_t<
+  use_vector_default_container,
+  std::vector<EulerTourNode<SketchClass>>,
+  absl::flat_hash_map<node_id_t, EulerTourNode<SketchClass>*>>>
 requires(SketchColumnConcept<SketchClass, vec_t>)
 class EulerTourTree {
   SketchClass temp_sketch;

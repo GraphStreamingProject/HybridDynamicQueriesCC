@@ -222,6 +222,7 @@ int main(int argc, char** argv) {
     ProfileConfig cfg = parse_args(argc, argv);
     std::string config_name = std::string(TIER_NAME) + "_" + CUTSET_NAME + "_" + SKETCH_NAME;
     if (IS_HYBRID) config_name += "_hybrid";
+    if (IS_HYBRID && cfg.hybrid_threshold > 0) config_name += "_t" + std::to_string(cfg.hybrid_threshold);
 
     // Create output directory
     std::string stream_basename = basename_of(cfg.stream_path);
@@ -301,16 +302,14 @@ int main(int argc, char** argv) {
 #endif
 #endif
 
-    const long profile_total_ops =
-        cfg.static_graph ? (edgecount * (cfg.do_deletions ? 2 : 1)) : edgecount;
-
     // Lambda for the profiling loop (shared between shmem and MPI rank 0)
     auto run_profile = [&](auto& system) {
         int max_maximal_tier = -1;
+      long processed_updates = 0;
         bool first_report = true;
         auto wall_start = std::chrono::high_resolution_clock::now();
 
-        auto emit_report = [&](long op_index) {
+        auto emit_report = [&](long op_index, long total_ops = -1L) {
             auto reports = get_space_reports(system);
             write_space_report_tsv(reports, space_file, !first_report, op_index);
             first_report = false;
@@ -320,29 +319,41 @@ int main(int argc, char** argv) {
                 max_maximal_tier = maximal;
             }
 
-            std::cout << "Profile update " << op_index << "/" << profile_total_ops
+            std::cout << "Profile report op=" << op_index;
+            if (total_ops > 0) {
+              std::cout << "/" << total_ops;
+            }
+            std::cout
                       << " max_tier=" << max_maximal_tier
                       << " tree_ops=" << system.get_num_tree_ops() << std::endl;
         };
 
         if (cfg.static_graph) {
+            const long static_total_updates = edgecount + (cfg.do_deletions ? edgecount : 0);
             std::mt19937 gen(seed);
             std::shuffle(static_edges.begin(), static_edges.end(), gen);
+            std::cout << "[profile][static] starting insert phase (updates 1-" << edgecount
+                  << " of " << static_total_updates << ")" << std::endl;
             for (long i = 0; i < edgecount; ++i) {
                 GraphUpdate operation;
                 operation.type = INSERT;
                 operation.edge.src = static_edges[static_cast<size_t>(i)].first;
                 operation.edge.dst = static_edges[static_cast<size_t>(i)].second;
                 system.update(operation);
+                ++processed_updates;
 
-                if (i > 0 && (i % cfg.report_interval == 0 || i == edgecount - 1)) {
-                    emit_report(i);
+              const long op_index = i + 1;
+              if (op_index % cfg.report_interval == 0 || op_index == edgecount) {
+                emit_report(op_index, static_total_updates);
                 }
             }
 #if IS_HYBRID
             system.force_sync();
 #endif
             if (cfg.do_deletions) {
+                std::cout << "[profile][static] insert phase complete; starting delete phase (updates "
+                      << (edgecount + 1) << "-" << static_total_updates << " of " << static_total_updates
+                      << ")" << std::endl;
                 std::shuffle(static_edges.begin(), static_edges.end(), gen);
                 for (long i = 0; i < edgecount; ++i) {
                     GraphUpdate operation;
@@ -350,10 +361,11 @@ int main(int argc, char** argv) {
                     operation.edge.src = static_edges[static_cast<size_t>(i)].first;
                     operation.edge.dst = static_edges[static_cast<size_t>(i)].second;
                     system.update(operation);
+                    ++processed_updates;
 
-                    long j = edgecount + i;
-                    if (j > 0 && (j % cfg.report_interval == 0 || i == edgecount - 1)) {
-                        emit_report(j);
+                    long op_index = edgecount + i + 1;
+                    if (op_index % cfg.report_interval == 0 || op_index == (2 * edgecount)) {
+                      emit_report(op_index, static_total_updates);
                     }
                 }
 #if IS_HYBRID
@@ -361,18 +373,25 @@ int main(int argc, char** argv) {
 #endif
             }
         } else {
+                long applied_updates = 0;
             for (long i = 0; i < edgecount; i++) {
                 GraphUpdate operation = stream_ptr->get_edge();
-                if (operation.type == 2) {
+                if (operation.type == BREAKPOINT) {
                     // Skip queries in profile mode — we only care about updates
                     continue;
                 }
                 system.update(operation);
+                ++applied_updates;
+                ++processed_updates;
 
-                if (i > 0 && (i % cfg.report_interval == 0 || i == edgecount - 1)) {
-                    emit_report(i);
+                  if (applied_updates % cfg.report_interval == 0) {
+                    emit_report(applied_updates);
                 }
             }
+
+                if (applied_updates > 0 && applied_updates % cfg.report_interval != 0) {
+                  emit_report(applied_updates);
+                }
         }
 
         auto wall_end = std::chrono::high_resolution_clock::now();
@@ -381,11 +400,12 @@ int main(int argc, char** argv) {
 
         // Write summary
         std::ofstream summary(summary_file);
-        summary << "stream\tconfig\tmax_tier\twall_time_ms\tbatch_size\theight_factor\tnum_tiers\ttree_ops" << std::endl;
+        summary << "stream\tconfig\tmax_tier\twall_time_ms\tprocessed_updates\tbatch_size\theight_factor\tnum_tiers\ttree_ops" << std::endl;
         summary << stream_basename << "\t"
                 << config_name << "\t"
                 << max_maximal_tier << "\t"
                 << wall_ms << "\t"
+          << processed_updates << "\t"
                 << actual_batch_size << "\t"
                 << hf << "\t"
                 << actual_num_tiers << "\t"

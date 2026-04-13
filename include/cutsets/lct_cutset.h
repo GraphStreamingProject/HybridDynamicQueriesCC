@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <type_traits>
 #include <utility>
 #include <unordered_set>
 #include <unordered_map>
@@ -13,6 +14,7 @@
 #include "cutsets/ufo_types.h"
 #include "sketch_interfacing.h"
 #include "types.h"
+#include "default_containers.h"
 #include <absl/container/flat_hash_map.h>
 #include "util.h"
 
@@ -38,7 +40,10 @@ class Node;
 
 template<typename SketchClass = DefaultSketchColumn,
         //  typename Container = std::vector<Node<SketchClass>>>
-typename Container = absl::flat_hash_map<node_id_t, Node<SketchClass>*>>
+typename Container = std::conditional_t<
+    use_vector_default_container,
+    std::vector<Node<SketchClass>>,
+    absl::flat_hash_map<node_id_t, Node<SketchClass>*>>>
 requires(SketchColumnConcept<SketchClass, vec_t>)
 class CutsetLCT {
 public:

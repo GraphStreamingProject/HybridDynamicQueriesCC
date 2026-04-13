@@ -27,6 +27,9 @@ HYBRID_THRESHOLD=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
 SPEED_INTERVAL=""
+STATIC_GRAPH=false
+DO_DELETIONS=false
+NUM_QUERIES=""
 AUTO_BUILD=false
 
 bench_parse_common_args() {
@@ -47,6 +50,9 @@ bench_parse_common_args() {
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
       (--recovery-size)    RECOVERY_SIZE="$2"; shift 2;;
       (--move-to-sketch)   MOVE_TO_SKETCH="$2"; shift 2;;
+      (--static-graph|--static) STATIC_GRAPH=true; shift;;
+      (--do-deletions)     DO_DELETIONS=true; shift;;
+      (--num-queries)      NUM_QUERIES="$2"; shift 2;;
       (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
       (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
@@ -67,15 +73,18 @@ bench_parse_common_args() {
         echo "  --hybrid   (flag, optional)"
         echo ""
         echo "Common flags:"
-      echo "  --stream <path>        Input stream file (required)"
-      echo "  --output-dir <dir>     Output directory for results"
-      echo "  --np <N>               Number of MPI processes (required for mpi)"
-      echo "  --batch-size <N>       Override batch size"
-      echo "  --height-factor <F>    Override height factor"
-      echo "  --num-tiers <N>        Override number of tiers"
-      echo "  --hybrid-threshold <N> Override hybrid threshold"
-      echo "  --recovery-size <N>    Override recovery sketch size (default: hybrid-threshold/8)"
-      echo "  --move-to-sketch <N>   Override move-to-sketch threshold (hybrid only)"
+        echo "  --stream <path>        Input stream file (required)"
+        echo "  --output-dir <dir>     Output directory for results"
+        echo "  --np <N>               Number of MPI processes (required for mpi)"
+        echo "  --batch-size <N>       Override batch size"
+        echo "  --height-factor <F>    Override height factor"
+        echo "  --num-tiers <N>        Override number of tiers"
+        echo "  --hybrid-threshold <N> Override hybrid threshold"
+        echo "  --recovery-size <N>    Override recovery sketch size (default: hybrid-threshold/8)"
+        echo "  --move-to-sketch <N>   Override move-to-sketch threshold (hybrid only)"
+        echo "  --static-graph | --static  Treat input as static graph edge list"
+        echo "  --do-deletions         In static mode, run delete phase after insert"
+        echo "  --num-queries <N|P%>   Static-mode query count (absolute or percentage of inserts)"
         echo "  --auto-build           Build binary if not found"
         exit 1
       fi
@@ -132,6 +141,9 @@ bench_build_args() {
   [[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
   [[ -n "$RECOVERY_SIZE" ]]    && BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
   [[ -n "$MOVE_TO_SKETCH" ]]   && BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
+  $STATIC_GRAPH                 && BENCH_ARGS+=(--static-graph)
+  $DO_DELETIONS                 && BENCH_ARGS+=(--do-deletions)
+  [[ -n "$NUM_QUERIES" ]]      && BENCH_ARGS+=(--num-queries "$NUM_QUERIES")
   [[ -n "$SPEED_INTERVAL" ]]   && BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
   return 0
 }

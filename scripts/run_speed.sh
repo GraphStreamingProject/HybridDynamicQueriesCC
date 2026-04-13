@@ -16,6 +16,7 @@
 #   --list          Show available built configs
 #   --batch-size N  --height-factor F  --num-tiers N
 #   --mpi-flags "..." --hybrid-threshold N --recovery-size N
+#   --static-graph|--static --do-deletions --num-queries N|P% --speed-interval N
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "${SCRIPT_DIR}/bench_common.sh"

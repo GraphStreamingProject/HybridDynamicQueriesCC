@@ -1,0 +1,13 @@
+{
+  "configs": [
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "resizeable",
+      "hybrid": true,
+      "batch_size": 10000,
+      "hybrid_threshold_multiplier": 20,
+      "num_tiers": "derived"
+    }
+  ]
+}

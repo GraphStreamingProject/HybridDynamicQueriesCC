@@ -13,6 +13,7 @@
 #   --list          Show available built configs
 #   --batch-size N  --height-factor F  --num-tiers N
 #   --mpi-flags "..." --hybrid-threshold N --recovery-size N
+#   --static-graph|--static --do-deletions
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "${SCRIPT_DIR}/bench_common.sh"
@@ -35,8 +36,6 @@ bench_parse_extra_arg() {
 bench_parse_common_args "$@"
 bench_resolve_binary "profile"
 bench_build_args
-BENCH_ARGS+=(--output-dir "$OUTPUT_DIR")
-BENCH_ARGS+=(--report-interval "$REPORT_INTERVAL")
 
 # Ensure output directory exists: {OUTPUT_DIR}/{CONFIG_NAME}/{RUN_SUFFIX}
 FINAL_OUTPUT_DIR="${OUTPUT_DIR}/${CONFIG_NAME}"
@@ -45,16 +44,7 @@ if [[ -n "$RUN_SUFFIX" ]]; then
 fi
 mkdir -p "${FINAL_OUTPUT_DIR}"
 
-# Note: The binary expects --output-dir to be the final destination for its TSVs
-# so we override the BENCH_ARGS entry if we added a run suffix.
-# Rebuild BENCH_ARGS to ensure --output-dir is correct
-BENCH_ARGS=("$STREAM")
-[[ -n "$BATCH_SIZE" ]]       && BENCH_ARGS+=(--batch-size "$BATCH_SIZE")
-[[ -n "$HEIGHT_FACTOR" ]]    && BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
-[[ -n "$NUM_TIERS" ]]        && BENCH_ARGS+=(--num-tiers "$NUM_TIERS")
-[[ -n "$HYBRID_THRESHOLD" ]] && BENCH_ARGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
-[[ -n "$RECOVERY_SIZE" ]]    && BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
-[[ -n "$MOVE_TO_SKETCH" ]]   && BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
+# The binary expects --output-dir to be the final destination for its TSVs.
 BENCH_ARGS+=(--output-dir "$FINAL_OUTPUT_DIR")
 BENCH_ARGS+=(--report-interval "$REPORT_INTERVAL")
 

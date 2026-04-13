@@ -1,0 +1,26 @@
+{
+  "configs": [
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "resizeable",
+      "hybrid": true,
+      "batch_size": 10000,
+      "hybrid_threshold_multiplier": 20,
+      "num_tiers": "derived",
+      "speed_interval": 1000000
+    },
+    {
+      "algo": "cf",
+      "speed_interval": 1000000
+    },
+    {
+      "algo": "mpi",
+      "cutset": "ett",
+      "sketch": "fixed",
+      "hybrid": false,
+      "batch_size": 100,
+      "speed_interval": 1000000
+    }
+  ]
+}

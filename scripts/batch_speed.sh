@@ -14,8 +14,22 @@ OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-${HOME}/sketch_results}"
 NUM_RUNS="${NUM_RUNS:-2}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
-MPI_ALGO="mpi"
+MPI_ALGO="mpi_batch"
 RANK0_CPUS="1"
+STATIC_GRAPH=false
+DO_DELETIONS=false
+NUM_QUERIES=""
+SPEED_INTERVAL=""
+BATCH_SIZE=""
+HEIGHT_FACTOR=""
+NUM_TIERS=""
+RECOVERY_SIZE=""
+MOVE_TO_SKETCH=""
+DATASET_CONFIG=""
+DATASET_BASE_DIR=""
+BATCH_CONFIG_JSON=""
+THRESHOLD_FACTOR="${THRESHOLD_FACTOR:-20}"
+NP_SET=false
 SLURM_MODE=false
 SLURM_PARTITION="long-40core"
 SLURM_TIME="24:00:00"
@@ -23,24 +37,44 @@ CPUS_PER_TASK="1"
 SLURM_EXCLUSIVE=true
 SBATCH_ARGS=""
 SLURM_LOG_DIR=""
+MAX_NP_REQUIRED=0
+
+DATASET_NAMES=()
+DATASET_PATHS=()
+DATASET_NODES=()
+DATASET_EDGES=()
+RUN_CONFIG_SPECS=()
 
 usage() {
     cat <<EOF
 Usage: $0 [--np N] [--cpus-per-task N] [--rank0-cpus N] [--num-runs N] [--output-base-dir DIR] [--mpi-flags "..."] stream_file1 [stream_file2 ...]
 
 Options:
-  --np N                Number of MPI ranks (default: NP env var or 23)
+    --np N                Fallback MPI ranks only when num_tiers is unspecified (np is always num_tiers + 1)
     --cpus-per-task N     CPUs per MPI rank for SLURM jobs (default: 1)
     --rank0-cpus N        Extra core binding for rank 0 (default: 1)
   --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 2)
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
   --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
+    --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
+    --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
+    --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold)
+    --threshold-factor N  Hybrid threshold multiplier (threshold = N * num_tiers, default: 20)
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
   --slurm-time T        SLURM time limit (default: 24:00:00; max: 48:00:00)
     --sbatch-args "..."   Extra arguments passed to sbatch (jobs are exclusive by default)
-  --mpi-algo ALGO       MPI algorithm: mpi or mpi_batch (default: mpi)
+    --mpi-algo ALGO       MPI algorithm: mpi or mpi_batch (default: mpi_batch)
+    --batch-size N        Forward batch size to bench_speed
+    --height-factor F     Forward height factor to bench_speed
+    --num-tiers N         Forward num tiers to bench_speed
+    --recovery-size N     Forward recovery sketch size to bench_speed
+    --move-to-sketch N    Forward move-to-sketch threshold to bench_speed
+    --static-graph|--static  Run static graph mode in bench_speed
+    --do-deletions        In static mode, include delete phase
+    --num-queries N|P%    In static mode, run N queries or P%% of insert count
+    --speed-interval N    Periodic update speed report interval
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
   -h, --help            Show this help text
 EOF
@@ -51,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --np)
             NP="$2"
+            NP_SET=true
             shift 2
             ;;
         --num-runs)
@@ -71,6 +106,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mpi-flags)
             MPI_FLAGS="$2"
+            shift 2
+            ;;
+        --dataset-config|--datasets-file)
+            DATASET_CONFIG="$2"
+            shift 2
+            ;;
+        --dataset-base-dir)
+            DATASET_BASE_DIR="$2"
+            shift 2
+            ;;
+        --batch-config|--config-json)
+            BATCH_CONFIG_JSON="$2"
+            shift 2
+            ;;
+        --threshold-factor)
+            THRESHOLD_FACTOR="$2"
             shift 2
             ;;
         --slurm)
@@ -101,6 +152,42 @@ while [[ $# -gt 0 ]]; do
             MPI_ALGO="$2"
             shift 2
             ;;
+        --batch-size)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --height-factor)
+            HEIGHT_FACTOR="$2"
+            shift 2
+            ;;
+        --num-tiers)
+            NUM_TIERS="$2"
+            shift 2
+            ;;
+        --recovery-size)
+            RECOVERY_SIZE="$2"
+            shift 2
+            ;;
+        --move-to-sketch)
+            MOVE_TO_SKETCH="$2"
+            shift 2
+            ;;
+        --static-graph|--static)
+            STATIC_GRAPH=true
+            shift
+            ;;
+        --do-deletions)
+            DO_DELETIONS=true
+            shift
+            ;;
+        --num-queries)
+            NUM_QUERIES="$2"
+            shift 2
+            ;;
+        --speed-interval)
+            SPEED_INTERVAL="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -124,7 +211,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ${#STREAM_FILES[@]} -eq 0 ]]; then
+if [[ ${#STREAM_FILES[@]} -eq 0 && -z "$DATASET_CONFIG" ]]; then
     usage
     exit 1
 fi
@@ -154,6 +241,11 @@ if [[ "$MPI_ALGO" != "mpi" && "$MPI_ALGO" != "mpi_batch" ]]; then
     exit 1
 fi
 
+if ! [[ "$THRESHOLD_FACTOR" =~ ^[0-9]+$ ]] || [[ "$THRESHOLD_FACTOR" -lt 1 ]]; then
+    echo "Error: --threshold-factor must be a positive integer (got '$THRESHOLD_FACTOR')."
+    exit 1
+fi
+
 if [[ "$OUTPUT_BASE_DIR" != "/" ]]; then
     OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR%/}"
 fi
@@ -162,6 +254,150 @@ if [[ "$RANK0_CPUS" -gt 1 ]] && [[ "$CPUS_PER_TASK" -ne 1 ]]; then
     echo "Error: --rank0-cpus and --cpus-per-task>1 conflict; use cpus-per-task=1 for rank0-only expansion."
     exit 1
 fi
+
+trim_field() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf "%s" "$s"
+}
+
+ceil_log2() {
+    local n="$1"
+    awk -v n="$n" 'BEGIN { if (n <= 1) { print 1; exit } p = 1; t = 0; while (p < n) { p *= 2; t += 1 } print t }'
+}
+
+load_dataset_config() {
+    local cfg_file="$1"
+    if [[ ! -f "$cfg_file" ]]; then
+        echo "Error: dataset config not found: $cfg_file"
+        exit 1
+    fi
+
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+        local line
+        line="${raw_line%$'\r'}"
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+        local c1 c2 c3 c4 _rest
+        if [[ "$line" == *,* ]]; then
+            IFS=',' read -r c1 c2 c3 c4 _rest <<< "$line"
+        else
+            # Accept mixed space/tab-separated dataset rows.
+            read -r c1 c2 c3 c4 _rest <<< "$line"
+        fi
+        c1="$(trim_field "$c1")"
+        c2="$(trim_field "$c2")"
+        c3="$(trim_field "$c3")"
+        c4="$(trim_field "$c4")"
+
+        local h1 h2 h3
+        h1="$(printf "%s" "$c1" | tr '[:upper:]' '[:lower:]')"
+        h2="$(printf "%s" "$c2" | tr '[:upper:]' '[:lower:]')"
+        h3="$(printf "%s" "$c3" | tr '[:upper:]' '[:lower:]')"
+        if [[ "$h1" =~ ^(dataset|dataset_name|name)$ ]] && [[ "$h2" =~ ^(filepath|path|file|relative_path|relpath)$ ]] && [[ "$h3" =~ ^(num_vertices|vertices|nodes)$ ]]; then
+            continue
+        fi
+
+        if [[ -z "$c1" || -z "$c2" || -z "$c3" ]]; then
+            echo "Warning: skipping malformed dataset row: $line"
+            continue
+        fi
+
+        if ! [[ "$c3" =~ ^[0-9]+$ ]]; then
+            echo "Warning: skipping dataset row with non-numeric num_vertices ('$c3'): $line"
+            continue
+        fi
+
+        if [[ -z "$c4" ]]; then
+            c4="0"
+        fi
+
+        local resolved_path="$c2"
+        if [[ "$resolved_path" != /* ]] && [[ -n "$DATASET_BASE_DIR" ]]; then
+            resolved_path="${DATASET_BASE_DIR%/}/${resolved_path}"
+        fi
+
+        DATASET_NAMES+=("$c1")
+        DATASET_PATHS+=("$resolved_path")
+        DATASET_NODES+=("$c3")
+        DATASET_EDGES+=("$c4")
+    done < "$cfg_file"
+
+    if [[ ${#DATASET_NAMES[@]} -eq 0 ]]; then
+        echo "Error: no valid dataset rows found in $cfg_file"
+        exit 1
+    fi
+}
+
+load_batch_config_json() {
+    local cfg_file="$1"
+    local parser_py="${SCRIPT_DIR}/parse_batch_config.py"
+    if [[ ! -f "$cfg_file" ]]; then
+        echo "Error: batch config JSON not found: $cfg_file"
+        exit 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: --batch-config requires 'python3' to parse JSON."
+        exit 1
+    fi
+    if [[ ! -f "$parser_py" ]]; then
+        echo "Error: missing batch config parser: $parser_py"
+        exit 1
+    fi
+
+    local has_np
+    if ! has_np="$(python3 "$parser_py" --has-np "$cfg_file")"; then
+        exit 1
+    fi
+
+    if [[ "$has_np" == "1" ]]; then
+        echo "Info: per-config 'np' is ignored; np is always derived as num_tiers + 1."
+    fi
+
+    local parsed_specs
+    if ! parsed_specs="$(python3 "$parser_py" --emit-specs "$cfg_file")"; then
+        exit 1
+    fi
+
+    while IFS= read -r spec_line; do
+        [[ -z "$spec_line" ]] && continue
+        RUN_CONFIG_SPECS+=("$spec_line")
+    done <<< "$parsed_specs"
+
+    if [[ ${#RUN_CONFIG_SPECS[@]} -eq 0 ]]; then
+        echo "Error: no configs found in $cfg_file (expected .configs array)."
+        exit 1
+    fi
+}
+
+if [[ -n "$DATASET_CONFIG" ]]; then
+    load_dataset_config "$DATASET_CONFIG"
+    if ! $STATIC_GRAPH; then
+        echo "Dataset config mode enabled; forcing static graph mode."
+        STATIC_GRAPH=true
+    fi
+fi
+
+if [[ -n "$BATCH_CONFIG_JSON" ]]; then
+    load_batch_config_json "$BATCH_CONFIG_JSON"
+fi
+
+BASE_BENCH_ARGS=()
+[[ -n "$BATCH_SIZE" ]] && BASE_BENCH_ARGS+=(--batch-size "$BATCH_SIZE")
+[[ -n "$HEIGHT_FACTOR" ]] && BASE_BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
+[[ -n "$RECOVERY_SIZE" ]] && BASE_BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
+[[ -n "$MOVE_TO_SKETCH" ]] && BASE_BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
+$STATIC_GRAPH && BASE_BENCH_ARGS+=(--static-graph)
+$DO_DELETIONS && BASE_BENCH_ARGS+=(--do-deletions)
+[[ -n "$NUM_QUERIES" ]] && BASE_BENCH_ARGS+=(--num-queries "$NUM_QUERIES")
+[[ -n "$SPEED_INTERVAL" ]] && BASE_BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
+
+CURRENT_OUTPUT_DIR=""
+CURRENT_STREAM_NAME=""
+CURRENT_STREAM_FILE=""
+CURRENT_BENCH_ARGS=()
 
 # In SLURM mode, collect task commands into a file for job array submission
 SLURM_TASK_FILE=""
@@ -185,123 +421,258 @@ get_next_run_suffix() {
     echo "${date_prefix}_$(printf "%02d" "$n")"
 }
 
-for stream_file in "${STREAM_FILES[@]}"; do
-    if [[ ! -f "$stream_file" ]]; then
-        echo "Warning: Stream file not found: $stream_file. Skipping."
-        continue
+# Helper to register a config: run it directly, or queue it for SLURM array submission.
+register_config() {
+    local config_args=("$@")
+
+    local algo="mpi"
+    local cutset="lct"
+    local sketch="resizeable"
+    local hybrid=false
+    local threshold=""
+
+    local i=0
+    while [[ $i -lt ${#config_args[@]} ]]; do
+        case "${config_args[$i]}" in
+            --algo) algo="${config_args[$((i+1))]}"; i=$((i+2));;
+            --cutset) cutset="${config_args[$((i+1))]}"; i=$((i+2));;
+            --sketch) sketch="${config_args[$((i+1))]}"; i=$((i+2));;
+            --hybrid) hybrid=true; i=$((i+1));;
+            --hybrid-threshold) threshold="${config_args[$((i+1))]}"; i=$((i+2));;
+            *) i=$((i+1));;
+        esac
+    done
+
+    local cfg_name="${algo}_${cutset}_${sketch}"
+    if $hybrid; then
+        cfg_name="${cfg_name}_hybrid"
+        if [[ -n "$threshold" ]]; then
+            cfg_name="${cfg_name}_t${threshold}"
+        fi
     fi
 
-    stream_name=$(basename "$stream_file" | sed 's/\.[^.]*$//')
-    output_dir="${OUTPUT_BASE_DIR}/${stream_name}"
+    if [[ "$algo" == "cf" ]]; then
+        cfg_name="cf"
+    fi
+
+    local full_config_path="${CURRENT_OUTPUT_DIR}/${cfg_name}"
+    local run_suffix
+    run_suffix=$(get_next_run_suffix "${full_config_path}")
+    local output_file="${full_config_path}/${run_suffix}/${CURRENT_STREAM_NAME}_speed.tsv"
+    local mpi_args=()
+    if [[ -n "$MPI_FLAGS" ]]; then
+        mpi_args+=(--mpi-flags "$MPI_FLAGS")
+    fi
+    if [[ "$RANK0_CPUS" -gt 1 ]]; then
+        mpi_args+=(--rank0-cpus "$RANK0_CPUS")
+    fi
+
+    echo "Config: ${cfg_name} | Suffix: ${run_suffix}"
+
+    if $SLURM_MODE; then
+        mkdir -p "$(dirname "$output_file")"
+
+        local cmd
+        cmd="cd $(printf '%q' "$(dirname "$SCRIPT_DIR")")"
+        cmd+=" && "
+        cmd+=$(printf '%q' "${SCRIPT_DIR}/run_speed.sh")
+        for arg in "${mpi_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
+        for arg in "${CURRENT_BENCH_ARGS[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
+        for arg in "${config_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
+        cmd+=" --output $(printf '%q' "$output_file")"
+
+        echo "$cmd" >> "$SLURM_TASK_FILE"
+        SLURM_TASK_COUNT=$((SLURM_TASK_COUNT + 1))
+    else
+        "${SCRIPT_DIR}/run_speed.sh" "${CURRENT_BENCH_ARGS[@]}" "${config_args[@]}" "${mpi_args[@]}" --output "$output_file"
+    fi
+}
+
+process_stream() {
+    local stream_name="$1"
+    local stream_file="$2"
+    local num_nodes="${3:-}"
+
+    if [[ ! -f "$stream_file" ]]; then
+        echo "Warning: Stream file not found: $stream_file. Skipping."
+        return
+    fi
+
+    CURRENT_STREAM_NAME="$stream_name"
+    CURRENT_STREAM_FILE="$stream_file"
+    CURRENT_OUTPUT_DIR="${OUTPUT_BASE_DIR}/${stream_name}"
 
     echo "=========================================================="
-    echo "Processing stream: ${stream_name}"
-    echo "File: ${stream_file}"
+    echo "Processing stream: ${CURRENT_STREAM_NAME}"
+    echo "File: ${CURRENT_STREAM_FILE}"
     echo "=========================================================="
 
-    # Helper to register a config: run it directly, or queue it for SLURM array submission.
-    register_config() {
-        local config_args=("$@")
+    local active_num_tiers="${NUM_TIERS}"
+    local active_np=""
+    local derived_tiers=""
+    local derived_threshold=""
 
-        # Parse args to reconstruct config folder naming.
-        local algo="mpi"
-        local cutset="lct"
-        local sketch="resizeable"
-        local hybrid=false
-        local threshold=""
-
-        local i=0
-        while [[ $i -lt ${#config_args[@]} ]]; do
-            case "${config_args[$i]}" in
-                --algo) algo="${config_args[$((i+1))]}"; i=$((i+2));;
-                --cutset) cutset="${config_args[$((i+1))]}"; i=$((i+2));;
-                --sketch) sketch="${config_args[$((i+1))]}"; i=$((i+2));;
-                --hybrid) hybrid=true; i=$((i+1));;
-                --hybrid-threshold) threshold="${config_args[$((i+1))]}"; i=$((i+2));;
-                *) i=$((i+1));;
-            esac
-        done
-
-        local cfg_name="${algo}_${cutset}_${sketch}"
-        if $hybrid; then
-            cfg_name="${cfg_name}_hybrid"
-            if [[ -n "$threshold" ]]; then
-                cfg_name="${cfg_name}_t${threshold}"
-            fi
+    if [[ -n "$num_nodes" ]]; then
+        derived_tiers=$(ceil_log2 "$num_nodes")
+        if [[ -z "$active_num_tiers" ]]; then
+            active_num_tiers="$derived_tiers"
         fi
+    fi
 
-        if [[ "$algo" == "cf" ]]; then
-            cfg_name="cf"
-        fi
+    if [[ -z "$active_num_tiers" ]]; then
+        active_num_tiers=$((NP - 1))
+        echo "Info: num_tiers not provided; deriving num_tiers=${active_num_tiers} from --np=${NP}."
+    fi
 
-        local full_config_path="${output_dir}/${cfg_name}"
-        local run_suffix
-        run_suffix=$(get_next_run_suffix "${full_config_path}")
-        local output_file="${full_config_path}/${run_suffix}/${stream_name}_speed.tsv"
-        local mpi_args=()
-        if [[ -n "$MPI_FLAGS" ]]; then
-            mpi_args+=(--mpi-flags "$MPI_FLAGS")
-        fi
-        if [[ "$RANK0_CPUS" -gt 1 ]]; then
-            mpi_args+=(--rank0-cpus "$RANK0_CPUS")
-        fi
+    active_np=$((active_num_tiers + 1))
+    if $NP_SET && [[ "$NP" -ne "$active_np" ]]; then
+        echo "Info: overriding --np=${NP}; using np=${active_np} (num_tiers + 1)."
+    fi
 
-        echo "Config: ${cfg_name} | Suffix: ${run_suffix}"
+    if [[ -n "$num_nodes" ]]; then
+        derived_threshold="$((THRESHOLD_FACTOR * active_num_tiers))"
+        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, hybrid_threshold=${derived_threshold}"
+    fi
 
-        if $SLURM_MODE; then
-            # Create directory to claim the run suffix
-            mkdir -p "$(dirname "$output_file")"
+    if [[ "$active_np" =~ ^[0-9]+$ ]] && [[ "$active_np" -gt "$MAX_NP_REQUIRED" ]]; then
+        MAX_NP_REQUIRED="$active_np"
+    fi
 
-            # Build the command line for this task
-            local cmd
-            cmd="cd $(printf '%q' "$(dirname "$SCRIPT_DIR")")"
-            cmd+=" && "
-            cmd+=$(printf '%q' "${SCRIPT_DIR}/run_speed.sh")
-            for arg in "${config_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
-            for arg in "${mpi_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
-            cmd+=" --output $(printf '%q' "$output_file")"
-
-            # Append to task list
-            echo "$cmd" >> "$SLURM_TASK_FILE"
-            SLURM_TASK_COUNT=$((SLURM_TASK_COUNT + 1))
-        else
-            "${SCRIPT_DIR}/run_speed.sh" "${config_args[@]}" "${mpi_args[@]}" --output "$output_file"
-        fi
-    }
+    CURRENT_BENCH_ARGS=("${BASE_BENCH_ARGS[@]}")
 
     for run in $(seq 1 "$NUM_RUNS"); do
-        echo "--- Batch Run Item ${run} / ${NUM_RUNS} (algo=${MPI_ALGO}) ---"
+        if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
+            echo "--- Batch Run Item ${run} / ${NUM_RUNS} (batch-config mode) ---"
+        else
+            echo "--- Batch Run Item ${run} / ${NUM_RUNS} (default-algo=${MPI_ALGO}) ---"
+        fi
 
-        # 1. Hybrid with Threshold 1200
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --hybrid-threshold 1200 --auto-build
+        if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
+            for spec in "${RUN_CONFIG_SPECS[@]}"; do
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval <<< "$spec"
+                if [[ "$cfg_algo" == "cf" ]]; then
+                    local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
+                    if [[ -n "$cfg_speed_interval" ]]; then
+                        if [[ "$cfg_speed_interval" =~ ^[0-9]+$ ]]; then
+                            cf_args+=(--speed-interval "$cfg_speed_interval")
+                        else
+                            echo "Warning: ignoring non-numeric speed_interval '$cfg_speed_interval' in config '$spec'"
+                        fi
+                    fi
+                    register_config "${cf_args[@]}"
+                    continue
+                fi
 
-        # 2. Hybrid with Threshold 2500
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --hybrid-threshold 2500 --auto-build
+                local config_num_tiers=""
+                if [[ -z "$cfg_num_tiers" ]]; then
+                    config_num_tiers="$active_num_tiers"
+                elif [[ "$cfg_num_tiers" == "default" ]]; then
+                    config_num_tiers=""
+                elif [[ "$cfg_num_tiers" == "derived" ]]; then
+                    if [[ -n "$derived_tiers" ]]; then
+                        config_num_tiers="$derived_tiers"
+                    else
+                        config_num_tiers="$active_num_tiers"
+                    fi
+                elif [[ "$cfg_num_tiers" =~ ^[0-9]+$ ]]; then
+                    config_num_tiers="$cfg_num_tiers"
+                else
+                    echo "Warning: ignoring invalid num_tiers '$cfg_num_tiers' in config '$spec'"
+                    config_num_tiers="$active_num_tiers"
+                fi
 
-        # 3. Hybrid with Threshold 500
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --hybrid-threshold 500 --auto-build
+                local tiers_for_np="$config_num_tiers"
+                if [[ -z "$tiers_for_np" ]]; then
+                    if [[ -n "$derived_tiers" ]]; then
+                        tiers_for_np="$derived_tiers"
+                    else
+                        tiers_for_np="$active_num_tiers"
+                    fi
+                fi
+                if ! [[ "$tiers_for_np" =~ ^[0-9]+$ ]]; then
+                    echo "Error: could not resolve numeric num_tiers for config '$spec'."
+                    exit 1
+                fi
 
-        # 4. Hybrid with Threshold 250
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --hybrid --hybrid-threshold 250 --auto-build
+                local config_np=$((tiers_for_np + 1))
+                if [[ "$config_np" -gt "$MAX_NP_REQUIRED" ]]; then
+                    MAX_NP_REQUIRED="$config_np"
+                fi
 
-        # 5. Pure Sketch
-        register_config --algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-            --stream "$stream_file" --np "$NP" --output-dir "$output_dir" \
-            --auto-build
+                local threshold_to_use="$cfg_threshold"
+                if [[ "$cfg_hybrid" == "true" && -z "$threshold_to_use" && -n "$cfg_threshold_mult" ]]; then
+                    if [[ "$cfg_threshold_mult" =~ ^[0-9]+$ ]]; then
+                        threshold_to_use="$((cfg_threshold_mult * tiers_for_np))"
+                    else
+                        echo "Warning: cannot apply hybrid_threshold_multiplier='$cfg_threshold_mult' for config '$spec'; falling back."
+                    fi
+                fi
+                if [[ "$cfg_hybrid" == "true" && -z "$threshold_to_use" ]]; then
+                    threshold_to_use="$((THRESHOLD_FACTOR * tiers_for_np))"
+                fi
 
-        # 6. Pure CF (always runs regardless of --mpi-algo)
-        register_config --algo cf \
-            --stream "$stream_file" --output-dir "$output_dir" --auto-build
+                local args=(--algo "$cfg_algo" --cutset "$cfg_cutset" --sketch "$cfg_sketch" \
+                    --stream "$CURRENT_STREAM_FILE" --np "$config_np" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
+                [[ -n "$config_num_tiers" ]] && args+=(--num-tiers "$config_num_tiers")
+                if [[ -n "$cfg_batch_size" ]]; then
+                    if [[ "$cfg_batch_size" =~ ^[0-9]+$ ]]; then
+                        args+=(--batch-size "$cfg_batch_size")
+                    else
+                        echo "Warning: ignoring non-numeric batch_size '$cfg_batch_size' in config '$spec'"
+                    fi
+                fi
+                if [[ -n "$cfg_speed_interval" ]]; then
+                    if [[ "$cfg_speed_interval" =~ ^[0-9]+$ ]]; then
+                        args+=(--speed-interval "$cfg_speed_interval")
+                    else
+                        echo "Warning: ignoring non-numeric speed_interval '$cfg_speed_interval' in config '$spec'"
+                    fi
+                fi
+                if [[ "$cfg_hybrid" == "true" ]]; then
+                    args+=(--hybrid)
+                    [[ -n "$threshold_to_use" ]] && args+=(--hybrid-threshold "$threshold_to_use")
+                fi
+                register_config "${args[@]}"
+            done
+        else
+            if [[ -n "$derived_threshold" ]]; then
+                local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
+                    --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
+                    --hybrid --hybrid-threshold "$derived_threshold" --auto-build)
+                [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
+                register_config "${hybrid_args[@]}"
+            else
+                for threshold in 1200 2500 500 250; do
+                    local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
+                        --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
+                        --hybrid --hybrid-threshold "$threshold" --auto-build)
+                    [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
+                    register_config "${hybrid_args[@]}"
+                done
+            fi
+
+            local pure_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
+                --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
+                --auto-build)
+            [[ -n "$active_num_tiers" ]] && pure_args+=(--num-tiers "$active_num_tiers")
+            register_config "${pure_args[@]}"
+
+            register_config --algo cf \
+                --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build
+        fi
     done
-done
+}
+
+if [[ -n "$DATASET_CONFIG" ]]; then
+    for i in "${!DATASET_NAMES[@]}"; do
+        process_stream "${DATASET_NAMES[$i]}" "${DATASET_PATHS[$i]}" "${DATASET_NODES[$i]}"
+    done
+else
+    for stream_file in "${STREAM_FILES[@]}"; do
+        stream_name=$(basename "$stream_file" | sed 's/\.[^.]*$//')
+        process_stream "$stream_name" "$stream_file"
+    done
+fi
 
 if $SLURM_MODE; then
     if [[ $SLURM_TASK_COUNT -eq 0 ]]; then
@@ -313,9 +684,12 @@ if $SLURM_MODE; then
     mkdir -p "$SLURM_LOG_DIR"
 
     ARRAY_MAX=$((SLURM_TASK_COUNT - 1))
-    ALLOC_TASKS_PER_NODE="$NP"
+    ALLOC_TASKS_PER_NODE="$MAX_NP_REQUIRED"
+    if [[ "$ALLOC_TASKS_PER_NODE" -lt 1 ]]; then
+        ALLOC_TASKS_PER_NODE="$NP"
+    fi
     if [[ "$RANK0_CPUS" -gt 1 ]]; then
-        ALLOC_TASKS_PER_NODE=$((NP + RANK0_CPUS - 1))
+        ALLOC_TASKS_PER_NODE=$((ALLOC_TASKS_PER_NODE + RANK0_CPUS - 1))
     fi
     JOB_SCRIPT="${SLURM_LOG_DIR}/batch_speed_array.sh"
     {

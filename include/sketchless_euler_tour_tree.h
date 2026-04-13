@@ -1,10 +1,12 @@
 #pragma once
 #include <iostream>
+#include <type_traits>
 #include <unordered_map>
 #include <set>
 
 #include <sketchless_skiplist.h>
 #include "types.h"
+#include "default_containers.h"
 
 
 #include <absl/container/flat_hash_map.h>
@@ -45,7 +47,10 @@ public:
 
 template <
 // typename Container = std::vector<SketchlessEulerTourNode>>
-typename Container = absl::flat_hash_map<node_id_t, SketchlessEulerTourNode*>>
+typename Container = std::conditional_t<
+  use_vector_default_container,
+  std::vector<SketchlessEulerTourNode>,
+  absl::flat_hash_map<node_id_t, SketchlessEulerTourNode*>>>
 class SketchlessEulerTourTree {
   // TODO - packing order fixes
   size_t seed = 0;

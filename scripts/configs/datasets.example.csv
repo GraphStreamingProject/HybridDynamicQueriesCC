@@ -1,0 +1,2 @@
+dataset_name,relative_path,num_vertices,num_edges
+sift_RS-30K_sym,sift_RS-30K_sym.bin,1000000,32876557

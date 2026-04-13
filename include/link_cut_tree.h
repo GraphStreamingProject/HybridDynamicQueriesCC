@@ -2,8 +2,10 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <type_traits>
 #include "types.h"
 #include "util.h"
+#include "default_containers.h"
 
 #include <absl/container/flat_hash_map.h>
 
@@ -79,7 +81,10 @@ class LinkCutNode {
 
 template <
 // typename Container = std::vector<LinkCutNode>>
-typename Container = absl::flat_hash_map<node_id_t, LinkCutNode*>>
+typename Container = std::conditional_t<
+  use_vector_default_container,
+  std::vector<LinkCutNode>,
+  absl::flat_hash_map<node_id_t, LinkCutNode*>>>
 class LinkCutTree {
   FRIEND_TEST(LinkCutTreeSuite, join_split_test);
   FRIEND_TEST(LinkCutTreeSuite, expose_simple_test);
