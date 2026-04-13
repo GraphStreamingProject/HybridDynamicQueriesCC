@@ -424,3 +424,14 @@ else()
   add_bench_targets(mpi_batch_ett_resizeable_hybrid  MPI_BATCH_TIERS ETT 1 1)
 endif()
 
+#####################################################################
+# Utility tools
+#####################################################################
+add_executable(stream_to_static_graph tools/stream_to_static_graph.cpp)
+target_include_directories(stream_to_static_graph PUBLIC include ${MPI_C_INCLUDE_PATH})
+target_compile_features(stream_to_static_graph PRIVATE cxx_std_20)
+add_dependencies(stream_to_static_graph GraphZeppelinVerifyCC dycon)
+target_link_libraries(stream_to_static_graph PRIVATE GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES})
+target_compile_options(stream_to_static_graph PUBLIC -fopenmp)
+target_link_options(stream_to_static_graph PUBLIC -fopenmp)
+

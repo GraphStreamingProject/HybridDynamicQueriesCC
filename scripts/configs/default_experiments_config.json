@@ -6,7 +6,7 @@
       "sketch": "resizeable",
       "hybrid": true,
       "batch_size": 10000,
-      "hybrid_threshold_multiplier": 20,
+      "hybrid_threshold_multiplier": 25,
       "num_tiers": "derived",
       "speed_interval": 1000000
     },

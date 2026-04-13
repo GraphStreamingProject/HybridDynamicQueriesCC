@@ -531,7 +531,7 @@ process_stream() {
 
     if [[ -n "$num_nodes" ]]; then
         derived_threshold="$((THRESHOLD_FACTOR * active_num_tiers))"
-        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, hybrid_threshold=${derived_threshold}"
+        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, default_hybrid_threshold=${derived_threshold}"
     fi
 
     if [[ "$active_np" =~ ^[0-9]+$ ]] && [[ "$active_np" -gt "$MAX_NP_REQUIRED" ]]; then
@@ -609,6 +609,12 @@ process_stream() {
                 fi
                 if [[ "$cfg_hybrid" == "true" && -z "$threshold_to_use" ]]; then
                     threshold_to_use="$((THRESHOLD_FACTOR * tiers_for_np))"
+                fi
+
+                if [[ "$cfg_hybrid" == "true" ]]; then
+                    echo "Resolved config params: algo=${cfg_algo}, cutset=${cfg_cutset}, sketch=${cfg_sketch}, num_tiers=${tiers_for_np}, np=${config_np}, hybrid_threshold=${threshold_to_use}"
+                else
+                    echo "Resolved config params: algo=${cfg_algo}, cutset=${cfg_cutset}, sketch=${cfg_sketch}, num_tiers=${tiers_for_np}, np=${config_np}"
                 fi
 
                 local args=(--algo "$cfg_algo" --cutset "$cfg_cutset" --sketch "$cfg_sketch" \

@@ -267,6 +267,47 @@ static std::string intervals_path_from(const std::string& output_path) {
     return output_path.substr(0, dot) + "_intervals" + output_path.substr(dot);
 }
 
+static std::string static_snapshot_path_from(const std::string& output_path) {
+  // foo_speed.tsv -> foo_speed_static_snapshot.tsv
+  auto dot = output_path.rfind('.');
+  if (dot == std::string::npos) return output_path + "_static_snapshot";
+  return output_path.substr(0, dot) + "_static_snapshot" + output_path.substr(dot);
+}
+
+template<typename T>
+static auto get_space_reports(T& system) {
+  return system.report_space_usage();
+}
+
+static size_t total_space_bytes(const SpaceReport& report) {
+  size_t total = report.query_tree_bytes + report.top_level_lct_bytes;
+  for (const auto& r : report.tier_reports) total += r.space_bytes;
+  return total;
+}
+
+static size_t total_space_bytes(const HybridSpaceReport& report) {
+  size_t total = report.cf_space_bytes + report.driver_space_bytes + report.recovery_sketch_space_bytes;
+  total += total_space_bytes(report.sketch_forest_report);
+  return total;
+}
+
+static int maximal_tier_of(const SpaceReport& report) {
+  return compute_first_maximal_tier(report);
+}
+
+static int maximal_tier_of(const HybridSpaceReport& report) {
+  return compute_first_maximal_tier(report);
+}
+
+template<typename ReportT>
+static void log_space_snapshot(const char* label, long update_idx, long total_updates, const ReportT& report) {
+  std::cout << "[speed][space] " << label
+        << " op " << update_idx << "/" << total_updates
+        << " maximal_tier=" << maximal_tier_of(report)
+        << " total_space_bytes=" << total_space_bytes(report)
+        << std::endl;
+}
+
 static void write_intervals_tsv(const std::string& path, const std::string& stream_path,
                                 const std::string& config_name,
                                 const std::vector<IntervalRecord>& records) {
@@ -630,6 +671,8 @@ int main(int argc, char** argv) {
         auto ins_interval_timer = std::chrono::high_resolution_clock::now();
         long inserted_updates = 0;
         int overall_max_link_tier = -1;
+        bool append_space_report = false;
+        const std::string space_output_path = cfg.output_path.empty() ? std::string() : static_snapshot_path_from(cfg.output_path);
         for (const auto& e : static_edges) {
             GraphUpdate op;
             op.type = INSERT;
@@ -685,6 +728,14 @@ int main(int argc, char** argv) {
         system.force_sync();
       #endif
         long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
+
+        // Memory snapshot after all insertions (timing already captured above).
+        auto post_insert_space = get_space_reports(system);
+        log_space_snapshot("post_insert", edgecount, static_total_updates, post_insert_space);
+        if (!space_output_path.empty()) {
+            write_space_report_tsv(post_insert_space, space_output_path, append_space_report, edgecount);
+            append_space_report = true;
+        }
 
         // Phase 2: Queries after insert
         long q_ins_time_us = 0;
@@ -775,6 +826,14 @@ int main(int argc, char** argv) {
           #endif
             del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
         }
+
+          // End-of-stream memory snapshot (after inserts + optional deletes).
+          auto end_space = get_space_reports(system);
+          log_space_snapshot("end_stream", static_total_updates, static_total_updates, end_space);
+          if (!space_output_path.empty()) {
+            write_space_report_tsv(end_space, space_output_path, append_space_report, static_total_updates);
+            append_space_report = true;
+          }
 
       #if IS_HYBRID
         size_t se = system.num_sketched_edges();
@@ -935,6 +994,8 @@ int main(int argc, char** argv) {
             auto ins_interval_timer = std::chrono::high_resolution_clock::now();
             long inserted_updates = 0;
             int overall_max_link_tier = -1;
+            bool append_space_report = false;
+            const std::string space_output_path = cfg.output_path.empty() ? std::string() : static_snapshot_path_from(cfg.output_path);
             for (const auto& e : static_edges) {
                 GraphUpdate op;
                 op.type = INSERT;
@@ -989,6 +1050,14 @@ int main(int argc, char** argv) {
             system.force_sync();
           #endif
             long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
+
+            // Memory snapshot after all insertions (timing already captured above).
+            auto post_insert_space = get_space_reports(system);
+            log_space_snapshot("post_insert", edgecount, static_total_updates, post_insert_space);
+            if (!space_output_path.empty()) {
+                write_space_report_tsv(post_insert_space, space_output_path, append_space_report, edgecount);
+                append_space_report = true;
+            }
             bool query_checksum = 0;
 
             long q_ins_time_us = 0;
@@ -1070,6 +1139,14 @@ int main(int argc, char** argv) {
               #endif
                 del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
             }
+
+              // End-of-stream memory snapshot (after inserts + optional deletes).
+              auto end_space = get_space_reports(system);
+              log_space_snapshot("end_stream", static_total_updates, static_total_updates, end_space);
+              if (!space_output_path.empty()) {
+                write_space_report_tsv(end_space, space_output_path, append_space_report, static_total_updates);
+                append_space_report = true;
+              }
 
           #if IS_HYBRID
             size_t se = system.num_sketched_edges();
