@@ -250,6 +250,7 @@ void BatchInputNode::process_updates() {
 
         query_forest.link(a, b, static_cast<int8_t>(first_isolated_tier + 1));
         tree_ops_count++;
+        if (static_cast<int>(first_isolated_tier) > _max_link_tier) _max_link_tier = static_cast<int>(first_isolated_tier);
         transaction_log.push_back({{a, b}, INSERT});
       } else {
         // No cycle: just link.
@@ -262,6 +263,7 @@ void BatchInputNode::process_updates() {
 
         query_forest.link(a, b, static_cast<int8_t>(first_isolated_tier + 1));
         tree_ops_count++;
+        if (static_cast<int>(first_isolated_tier) > _max_link_tier) _max_link_tier = static_cast<int>(first_isolated_tier);
         transaction_log.push_back({{a, b}, INSERT});
       }
     }

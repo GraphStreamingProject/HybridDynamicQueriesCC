@@ -72,6 +72,7 @@ class InputNode {
   uint32_t num_tiers;
   TopLevelForest query_forest;
   long tree_ops_count = 0;
+  int _max_link_tier = -1;
   UpdateMessage* update_buffer;
   
   std::vector<GraphUpdate> transaction_log;
@@ -129,6 +130,8 @@ public:
     return transaction_log;
   }
   long get_num_tree_ops() const { return tree_ops_count; }
+  int get_max_link_tier() const { return _max_link_tier; }
+  void reset_max_link_tier() { _max_link_tier = -1; }
 };
 
 template <typename TreeStrategy>

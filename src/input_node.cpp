@@ -159,6 +159,7 @@ void InputNode::process_updates() {
         unlikely_if (split_revert_buffer[update_idx-1] != MAX_INT) {
             query_forest.link(update.edge.src, update.edge.dst, static_cast<int8_t>(split_revert_buffer[update_idx-1]));
             tree_ops_count++;
+            if (split_revert_buffer[update_idx-1] > _max_link_tier) _max_link_tier = split_revert_buffer[update_idx-1];
             // Rollback links are provisional and must not leak to the external
             // transaction log consumed by the hybrid manager.
         }
@@ -232,6 +233,7 @@ void InputNode::process_updates() {
                         query_forest.link(update_message.endpoint1, update_message.endpoint2,
                                           static_cast<int8_t>(update_message.start_tier));
                         tree_ops_count++;
+                        if (static_cast<int>(update_message.start_tier) > _max_link_tier) _max_link_tier = static_cast<int>(update_message.start_tier);
                         // transaction_log.add(update_message, INSERT);
                         transaction_log.push_back(
                             GraphUpdate{Edge{update_message.endpoint1, update_message.endpoint2}, INSERT});

@@ -257,6 +257,7 @@ struct IntervalRecord {
     size_t direct_sketch_inserts = 0;
     size_t sketched_vertices = 0;
     long tree_ops = 0;
+    int max_link_tier = -1;
 };
 
 static std::string intervals_path_from(const std::string& output_path) {
@@ -271,7 +272,7 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
                                 const std::vector<IntervalRecord>& records) {
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     std::ofstream out(path);
-  out << "stream\tconfig\tstream_index\tupdate_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges\ttree_ops";
+  out << "stream\tconfig\tstream_index\tupdate_index\tnum_updates\tinterval_ms\tupdates_per_sec\tnum_edges\ttree_ops\tmax_link_tier";
 #if IS_HYBRID
     out << "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices";
 #endif
@@ -281,7 +282,7 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
             ? (static_cast<double>(r.num_updates) / r.interval_ms * 1000.0) : 0;
         out << basename_of(stream_path) << "\t" << config_name << "\t"
             << r.stream_index << "\t" << r.update_index << "\t" << r.num_updates << "\t"
-            << r.interval_ms << "\t" << static_cast<long>(ups) << "\t" << r.num_edges << "\t" << r.tree_ops;
+            << r.interval_ms << "\t" << static_cast<long>(ups) << "\t" << r.num_edges << "\t" << r.tree_ops << "\t" << r.max_link_tier;
 #if IS_HYBRID
   out << "\t" << r.sketched_edges << "\t" << r.direct_sketch_inserts << "\t" << r.sketched_vertices;
 #endif
@@ -291,9 +292,9 @@ static void write_intervals_tsv(const std::string& path, const std::string& stre
 
 static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                             long total_ops, long num_updates, long num_queries, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                            long num_edges = 0, long tree_ops = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
+                            long num_edges = 0, long tree_ops = 0, int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
   out << "stream\tconfig\tnum_nodes\ttotal_ops\tnum_updates\tnum_queries\tupdate_time_ms\tquery_time_ms\t"
-           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges\ttree_ops"
+           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges\ttree_ops\tmax_link_tier"
 #if IS_HYBRID
            "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
 #endif
@@ -306,7 +307,7 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
     out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << total_ops << "\t"
       << num_updates << "\t" << num_queries << "\t"
         << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
-        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges << "\t" << tree_ops;
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges << "\t" << tree_ops << "\t" << max_link_tier;
 #if IS_HYBRID
   out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
 #endif
@@ -315,7 +316,7 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
 
 static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
                                long total_ops, long num_updates, long num_queries, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                               long num_edges = 0, long tree_ops = 0, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
+                               long num_edges = 0, long tree_ops = 0, int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     long update_ms = update_time_us / 1000;
     long query_ms = query_time_us / 1000;
     double ups = (update_ms > 0) ? (static_cast<double>(num_updates) / update_ms * 1000.0) : 0;
@@ -337,7 +338,8 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
         << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
         << std::setw(w) << "Num Edges" << ": " << num_edges << "\n"
-        << std::setw(w) << "Tree Ops" << ": " << tree_ops << "\n";
+        << std::setw(w) << "Tree Ops" << ": " << tree_ops << "\n"
+        << std::setw(w) << "Max Link Tier" << ": " << max_link_tier << "\n";
 #if IS_HYBRID
     out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
       << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n"
@@ -352,15 +354,15 @@ static void write_static_speed_tsv(std::ostream& out, const BenchConfig& cfg, co
                                    long edgecount, long ins_time_us, long q_time_us, long del_time_us,
                                    size_t executed_num_queries,
                                    int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                                   size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
-    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers"
+                                   int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
+    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers\tmax_link_tier"
 #if IS_HYBRID
            "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
 #endif
            "\n";
     out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << edgecount << "\t" << executed_num_queries << "\t"
         << (ins_time_us/1000) << "\t" << (q_time_us/1000) << "\t" << (del_time_us/1000) << "\t"
-        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers;
+        << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << max_link_tier;
 #if IS_HYBRID
     out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
 #endif
@@ -371,7 +373,7 @@ static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg,
                                       long edgecount, long ins_time_us, long q_time_us, long del_time_us,
                                       size_t executed_num_queries,
                                       int actual_batch_size, double actual_height_factor, int actual_num_tiers,
-                                      size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
+                                      int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     int w = 24;
     out << "\n" << std::string(50, '=') << "\n Benchmark Static Graph Results\n" << std::string(50, '=') << "\n"
         << std::left << std::setw(w) << "Graph File" << ": " << basename_of(cfg.stream_path) << "\n"
@@ -386,7 +388,8 @@ static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg,
     }
     out << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
-        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n";
+        << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
+        << std::setw(w) << "Max Link Tier" << ": " << max_link_tier << "\n";
 #if IS_HYBRID
     out << std::setw(w) << "Sketched Edges" << ": " << sketched_edges << "\n"
         << std::setw(w) << "Direct Sketch Inserts" << ": " << direct_sketch_inserts << "\n"
@@ -510,6 +513,7 @@ int main(int argc, char** argv) {
         long current_num_edges = 0;
         auto interval_timer = std::chrono::high_resolution_clock::now();
         std::vector<IntervalRecord> interval_records;
+        int overall_max_link_tier = -1;
 
         for (long i = 0; i < edgecount; i++) {
             GraphUpdate operation = stream_ptr->get_edge();
@@ -546,7 +550,8 @@ int main(int argc, char** argv) {
                               << "  last " << updates_since_report << " updates in " << interval_ms << " ms"
                               << "  (" << static_cast<long>(ups) << " updates/sec)"
                               << "  edges=" << current_num_edges
-                              << "  tree_ops=" << system.get_num_tree_ops();
+                              << "  tree_ops=" << system.get_num_tree_ops()
+                              << "  max_link_tier=" << system.get_max_link_tier();
                   #if IS_HYBRID
                     size_t ise = system.num_sketched_edges();
                     size_t idse = system.num_direct_sketch_edges();
@@ -556,7 +561,9 @@ int main(int argc, char** argv) {
                     size_t ise = 0, idse = 0, isv = 0;
                   #endif
                     std::cout << std::endl;
-                    interval_records.push_back({i + 1, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops()});
+                    interval_records.push_back({i + 1, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops(), system.get_max_link_tier()});
+                    overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                    system.reset_max_link_tier();
                     updates_since_report = 0;
                     interval_timer = now;
                 }
@@ -573,8 +580,12 @@ int main(int argc, char** argv) {
           #else
             size_t ise = 0, idse = 0, isv = 0;
           #endif
-            interval_records.push_back({edgecount, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops()});
+            interval_records.push_back({edgecount, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops(), system.get_max_link_tier()});
+            overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+            system.reset_max_link_tier();
         }
+        // Also capture any remaining value if no intervals were used
+        overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
 
       #if IS_HYBRID
         system.force_sync();
@@ -592,11 +603,11 @@ int main(int argc, char** argv) {
       #endif
 
         if (cfg.output_path.empty()) {
-          write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
+          write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
         } else {
             std::ofstream out(cfg.output_path);
-          write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
-          write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
+          write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
+          write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
             if (!interval_records.empty()) {
                 write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
             }
@@ -618,6 +629,7 @@ int main(int argc, char** argv) {
         long inserts_since_report = 0;
         auto ins_interval_timer = std::chrono::high_resolution_clock::now();
         long inserted_updates = 0;
+        int overall_max_link_tier = -1;
         for (const auto& e : static_edges) {
             GraphUpdate op;
             op.type = INSERT;
@@ -635,13 +647,16 @@ int main(int argc, char** argv) {
                           << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
                           << "  (" << static_cast<long>(ups) << " updates/sec)"
                           << "  edges=" << inserted_updates
-                          << "  tree_ops=" << system.get_num_tree_ops();
+                          << "  tree_ops=" << system.get_num_tree_ops()
+                          << "  max_link_tier=" << system.get_max_link_tier();
               #if IS_HYBRID
                 std::cout << "  sketched=" << system.num_sketched_edges()
                           << " direct=" << system.num_direct_sketch_edges()
                           << " sketched_verts=" << system.num_sketched_vertices();
               #endif
                 std::cout << std::endl;
+                overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                system.reset_max_link_tier();
                 inserts_since_report = 0;
                 ins_interval_timer = now;
             }
@@ -654,14 +669,18 @@ int main(int argc, char** argv) {
                       << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
                       << "  (" << static_cast<long>(ups) << " updates/sec)"
                       << "  edges=" << inserted_updates
-                      << "  tree_ops=" << system.get_num_tree_ops();
+                      << "  tree_ops=" << system.get_num_tree_ops()
+                      << "  max_link_tier=" << system.get_max_link_tier();
           #if IS_HYBRID
             std::cout << "  sketched=" << system.num_sketched_edges()
                       << " direct=" << system.num_direct_sketch_edges()
                       << " sketched_verts=" << system.num_sketched_vertices();
           #endif
             std::cout << std::endl;
+            overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+            system.reset_max_link_tier();
         }
+        overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
       #if IS_HYBRID
         system.force_sync();
       #endif
@@ -716,13 +735,16 @@ int main(int argc, char** argv) {
                               << "  last " << deletes_since_report << " updates in " << interval_ms << " ms"
                               << "  (" << static_cast<long>(ups) << " updates/sec)"
                               << "  edges=" << (edgecount - deleted_updates)
-                              << "  tree_ops=" << system.get_num_tree_ops();
+                              << "  tree_ops=" << system.get_num_tree_ops()
+                              << "  max_link_tier=" << system.get_max_link_tier();
                   #if IS_HYBRID
                     std::cout << "  sketched=" << system.num_sketched_edges()
                               << " direct=" << system.num_direct_sketch_edges()
                               << " sketched_verts=" << system.num_sketched_vertices();
                   #endif
                     std::cout << std::endl;
+                    overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                    system.reset_max_link_tier();
                     deletes_since_report = 0;
                     del_interval_timer = now;
                 }
@@ -736,14 +758,18 @@ int main(int argc, char** argv) {
                           << "  last " << deletes_since_report << " updates in " << interval_ms << " ms"
                           << "  (" << static_cast<long>(ups) << " updates/sec)"
                           << "  edges=" << (edgecount - deleted_updates)
-                          << "  tree_ops=" << system.get_num_tree_ops();
+                          << "  tree_ops=" << system.get_num_tree_ops()
+                          << "  max_link_tier=" << system.get_max_link_tier();
               #if IS_HYBRID
                 std::cout << "  sketched=" << system.num_sketched_edges()
                           << " direct=" << system.num_direct_sketch_edges()
                           << " sketched_verts=" << system.num_sketched_vertices();
               #endif
                 std::cout << std::endl;
+                overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                system.reset_max_link_tier();
             }
+            overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
           #if IS_HYBRID
             system.force_sync();
           #endif
@@ -759,11 +785,11 @@ int main(int argc, char** argv) {
       #endif
 
         if (cfg.output_path.empty()) {
-          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
+          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
         } else {
             std::ofstream out(cfg.output_path);
-          write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
-          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
+          write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
         }
     }
 
@@ -801,6 +827,7 @@ int main(int argc, char** argv) {
             long current_num_edges = 0;
             auto interval_timer = std::chrono::high_resolution_clock::now();
             std::vector<IntervalRecord> interval_records;
+            int overall_max_link_tier = -1;
 
             for (long i = 0; i < edgecount; i++) {
                 GraphUpdate operation = stream_ptr->get_edge();
@@ -831,7 +858,8 @@ int main(int argc, char** argv) {
                                   << "  last " << updates_since_report << " updates in " << interval_ms << " ms"
                                   << "  (" << static_cast<long>(ups) << " updates/sec)"
                                   << "  edges=" << current_num_edges
-                                  << "  tree_ops=" << system.get_num_tree_ops();
+                                  << "  tree_ops=" << system.get_num_tree_ops()
+                                  << "  max_link_tier=" << system.get_max_link_tier();
                       #if IS_HYBRID
                         size_t ise = system.num_sketched_edges();
                         size_t idse = system.num_direct_sketch_edges();
@@ -841,7 +869,9 @@ int main(int argc, char** argv) {
                         size_t ise = 0, idse = 0, isv = 0;
                       #endif
                         std::cout << std::endl;
-                        interval_records.push_back({i + 1, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops()});
+                        interval_records.push_back({i + 1, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops(), system.get_max_link_tier()});
+                        overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                        system.reset_max_link_tier();
                         updates_since_report = 0;
                         interval_timer = now;
                     }
@@ -858,8 +888,11 @@ int main(int argc, char** argv) {
               #else
                 size_t ise = 0, idse = 0, isv = 0;
               #endif
-                interval_records.push_back({edgecount, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops()});
+                interval_records.push_back({edgecount, num_updates, updates_since_report, interval_ms, current_num_edges, ise, idse, isv, system.get_num_tree_ops(), system.get_max_link_tier()});
+                overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                system.reset_max_link_tier();
             }
+            overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
 
           #if IS_HYBRID
             system.force_sync();
@@ -877,11 +910,11 @@ int main(int argc, char** argv) {
           #endif
 
             if (cfg.output_path.empty()) {
-              write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
+              write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
             } else {
                 std::ofstream out(cfg.output_path);
-              write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
-              write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), se, dse, sv);
+              write_speed_tsv(out, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
+              write_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, num_updates, num_queries, total_update_time, total_query_time, actual_batch_size, hf, actual_num_tiers, current_num_edges, system.get_num_tree_ops(), overall_max_link_tier, se, dse, sv);
                 if (!interval_records.empty()) {
                     write_intervals_tsv(intervals_path_from(cfg.output_path), cfg.stream_path, config_name, interval_records);
                 }
@@ -901,6 +934,7 @@ int main(int argc, char** argv) {
             long inserts_since_report = 0;
             auto ins_interval_timer = std::chrono::high_resolution_clock::now();
             long inserted_updates = 0;
+            int overall_max_link_tier = -1;
             for (const auto& e : static_edges) {
                 GraphUpdate op;
                 op.type = INSERT;
@@ -918,13 +952,16 @@ int main(int argc, char** argv) {
                               << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
                               << "  (" << static_cast<long>(ups) << " updates/sec)"
                               << "  edges=" << inserted_updates
-                              << "  tree_ops=" << system.get_num_tree_ops();
+                              << "  tree_ops=" << system.get_num_tree_ops()
+                              << "  max_link_tier=" << system.get_max_link_tier();
                   #if IS_HYBRID
                     std::cout << "  sketched=" << system.num_sketched_edges()
                               << " direct=" << system.num_direct_sketch_edges()
                               << " sketched_verts=" << system.num_sketched_vertices();
                   #endif
                     std::cout << std::endl;
+                    overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                    system.reset_max_link_tier();
                     inserts_since_report = 0;
                     ins_interval_timer = now;
                 }
@@ -937,14 +974,17 @@ int main(int argc, char** argv) {
                           << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
                           << "  (" << static_cast<long>(ups) << " updates/sec)"
                           << "  edges=" << inserted_updates
-                          << "  tree_ops=" << system.get_num_tree_ops();
+                          << "  tree_ops=" << system.get_num_tree_ops()
+                          << "  max_link_tier=" << system.get_max_link_tier();
               #if IS_HYBRID
                 std::cout << "  sketched=" << system.num_sketched_edges()
                           << " direct=" << system.num_direct_sketch_edges()
                           << " sketched_verts=" << system.num_sketched_vertices();
               #endif
                 std::cout << std::endl;
+                overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
             }
+            overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
           #if IS_HYBRID
             system.force_sync();
           #endif
@@ -991,13 +1031,16 @@ int main(int argc, char** argv) {
                                   << "  last " << deletes_since_report << " updates in " << interval_ms << " ms"
                                   << "  (" << static_cast<long>(ups) << " updates/sec)"
                                   << "  edges=" << (edgecount - deleted_updates)
-                                  << "  tree_ops=" << system.get_num_tree_ops();
+                                  << "  tree_ops=" << system.get_num_tree_ops()
+                                  << "  max_link_tier=" << system.get_max_link_tier();
                       #if IS_HYBRID
                         std::cout << "  sketched=" << system.num_sketched_edges()
                                   << " direct=" << system.num_direct_sketch_edges()
                                   << " sketched_verts=" << system.num_sketched_vertices();
                       #endif
                         std::cout << std::endl;
+                        overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
+                        system.reset_max_link_tier();
                         deletes_since_report = 0;
                         del_interval_timer = now;
                     }
@@ -1011,14 +1054,17 @@ int main(int argc, char** argv) {
                               << "  last " << deletes_since_report << " updates in " << interval_ms << " ms"
                               << "  (" << static_cast<long>(ups) << " updates/sec)"
                               << "  edges=" << (edgecount - deleted_updates)
-                              << "  tree_ops=" << system.get_num_tree_ops();
+                              << "  tree_ops=" << system.get_num_tree_ops()
+                              << "  max_link_tier=" << system.get_max_link_tier();
                   #if IS_HYBRID
                     std::cout << "  sketched=" << system.num_sketched_edges()
                               << " direct=" << system.num_direct_sketch_edges()
                               << " sketched_verts=" << system.num_sketched_vertices();
                   #endif
                     std::cout << std::endl;
+                    overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
                 }
+                overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
               #if IS_HYBRID
                 system.force_sync();
               #endif
@@ -1034,11 +1080,11 @@ int main(int argc, char** argv) {
           #endif
 
             if (cfg.output_path.empty()) {
-              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
+              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
             } else {
                 std::ofstream out(cfg.output_path);
-              write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
-              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, se, dse, sv);
+              write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
             }
         }
 

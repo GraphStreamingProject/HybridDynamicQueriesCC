@@ -42,5 +42,7 @@ public:
     }
 
     long get_num_tree_ops() const { return 0; }
+    int get_max_link_tier() const { return -1; }
+    void reset_max_link_tier() { }
 };
 

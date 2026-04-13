@@ -642,4 +642,6 @@ class SerialConnectivityManager {
         }
 
         long get_num_tree_ops() const { return sketching_algo.get_num_tree_ops(); }
+        int get_max_link_tier() const { return sketching_algo.get_max_link_tier(); }
+        void reset_max_link_tier() { sketching_algo.reset_max_link_tier(); }
 };

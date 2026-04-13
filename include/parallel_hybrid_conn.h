@@ -121,6 +121,8 @@ private:
         }
 
         long get_num_tree_ops() const { return sketching_algo.get_num_tree_ops(); }
+        int get_max_link_tier() const { return sketching_algo.get_max_link_tier(); }
+        void reset_max_link_tier() { sketching_algo.reset_max_link_tier(); }
 
     private:
         void apply_command(const SketchCommand& cmd) {
@@ -823,6 +825,8 @@ public:
     // TODO - this isnt locked rn properly
     // it should roughly be fine though?
     long get_num_tree_ops() const { return sketch_subsystem.get_num_tree_ops(); }
+    int get_max_link_tier() const { return sketch_subsystem.get_max_link_tier(); }
+    void reset_max_link_tier() { sketch_subsystem.reset_max_link_tier(); }
 
     void end() {
         sync_queues();

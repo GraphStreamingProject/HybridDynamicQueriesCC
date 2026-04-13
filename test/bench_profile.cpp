@@ -305,6 +305,7 @@ int main(int argc, char** argv) {
     // Lambda for the profiling loop (shared between shmem and MPI rank 0)
     auto run_profile = [&](auto& system) {
         int max_maximal_tier = -1;
+        int overall_max_link_tier = -1;
       long processed_updates = 0;
         bool first_report = true;
         auto wall_start = std::chrono::high_resolution_clock::now();
@@ -319,12 +320,19 @@ int main(int argc, char** argv) {
                 max_maximal_tier = maximal;
             }
 
+            int interval_max_link_tier = system.get_max_link_tier();
+            if (interval_max_link_tier > overall_max_link_tier) {
+                overall_max_link_tier = interval_max_link_tier;
+            }
+            system.reset_max_link_tier();
+
             std::cout << "Profile report op=" << op_index;
             if (total_ops > 0) {
               std::cout << "/" << total_ops;
             }
             std::cout
                       << " max_tier=" << max_maximal_tier
+                      << " max_link_tier=" << interval_max_link_tier
                       << " tree_ops=" << system.get_num_tree_ops() << std::endl;
         };
 
@@ -400,10 +408,11 @@ int main(int argc, char** argv) {
 
         // Write summary
         std::ofstream summary(summary_file);
-        summary << "stream\tconfig\tmax_tier\twall_time_ms\tprocessed_updates\tbatch_size\theight_factor\tnum_tiers\ttree_ops" << std::endl;
+        summary << "stream\tconfig\tmax_tier\tmax_link_tier\twall_time_ms\tprocessed_updates\tbatch_size\theight_factor\tnum_tiers\ttree_ops" << std::endl;
         summary << stream_basename << "\t"
                 << config_name << "\t"
                 << max_maximal_tier << "\t"
+                << overall_max_link_tier << "\t"
                 << wall_ms << "\t"
           << processed_updates << "\t"
                 << actual_batch_size << "\t"
@@ -412,6 +421,7 @@ int main(int argc, char** argv) {
                 << final_tree_ops << std::endl;
 
         std::cout << "Profile complete. max_tier=" << max_maximal_tier
+                  << " max_link_tier=" << overall_max_link_tier
                   << " wall_time=" << wall_ms << "ms"
                   << " tree_ops=" << final_tree_ops << std::endl;
         std::cout << "Space file: " << space_file << std::endl;

@@ -47,6 +47,7 @@ class BatchTiers {
         std::vector<TreeStrategy> ett;  // one ETT for each tier
         TopLevelForest query_forest;
         long tree_ops_count = 0;
+        int _max_link_tier = -1;
         std::mutex lct_and_query_ett_lock;
         parlay::sequence<int32_t> _unique_update_ids;
         
@@ -220,6 +221,8 @@ class BatchTiers {
 
         SpaceReport report_space_usage();
         long get_num_tree_ops() const { return tree_ops_count; }
+        int get_max_link_tier() const { return _max_link_tier; }
+        void reset_max_link_tier() { _max_link_tier = -1; }
 
         // find the index of the highest everywhere-maximal tier.
         

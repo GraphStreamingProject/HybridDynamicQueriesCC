@@ -694,6 +694,7 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                     _pending_links.push_back({a, b});
                                     query_forest.link(a, b, static_cast<int8_t>(tier_idx + 1));
                                     tree_ops_count++;
+                                    if (static_cast<int>(tier_idx) > _max_link_tier) _max_link_tier = static_cast<int>(tier_idx);
                                     transaction_log.push_back({{a, b}, INSERT});
                                     // and update the dsu
                                 }
@@ -703,6 +704,7 @@ bool BatchTiers<TreeStrategy>::_fix_isolations_at_tier(const parlay::sequence<Gr
                                 _pending_links.push_back({a, b});
                                 query_forest.link(a, b, static_cast<int8_t>(tier_idx + 1));
                                 tree_ops_count++;
+                                if (static_cast<int>(tier_idx) > _max_link_tier) _max_link_tier = static_cast<int>(tier_idx);
                                 transaction_log.push_back({{a, b}, INSERT});
                             }
                         }

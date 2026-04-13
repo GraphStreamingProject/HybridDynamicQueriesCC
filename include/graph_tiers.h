@@ -43,6 +43,7 @@ private:
   std::vector<ComponentView> root_nodes;
   TopLevelForest query_forest;
   long tree_ops_count = 0;
+  int _max_link_tier = -1;
   std::vector<GraphUpdate> transaction_log;
   void refresh(GraphUpdate update, bool did_cut);
 
@@ -121,4 +122,6 @@ public:
 
   SpaceReport report_space_usage();
   long get_num_tree_ops() const { return tree_ops_count; }
+  int get_max_link_tier() const { return _max_link_tier; }
+  void reset_max_link_tier() { _max_link_tier = -1; }
 };

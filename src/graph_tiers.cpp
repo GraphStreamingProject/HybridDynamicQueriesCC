@@ -224,6 +224,7 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			START(lct4);
 			query_forest.link(a,b, static_cast<int8_t>(tier+1));
 			tree_ops_count++;
+			if (static_cast<int>(tier) > _max_link_tier) _max_link_tier = static_cast<int>(tier);
 			STOP(lct_time, lct4);
 		}
 		// if (both_components_maximized) {
