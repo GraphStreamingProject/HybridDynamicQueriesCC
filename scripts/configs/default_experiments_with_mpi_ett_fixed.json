@@ -13,6 +13,14 @@
     {
       "algo": "cf",
       "speed_interval": 1000000
+    },
+    {
+      "algo": "mpi",
+      "cutset": "ett",
+      "sketch": "fixed",
+      "hybrid": false,
+      "batch_size": 100,
+      "speed_interval": 1000000
     }
   ]
 }
