@@ -4,3 +4,5 @@ results/
 .vscode/
 tags
 .cache/
+.cursor/
+**/__pycache__/
