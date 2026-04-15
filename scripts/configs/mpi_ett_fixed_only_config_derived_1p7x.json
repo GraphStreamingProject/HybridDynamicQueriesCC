@@ -1,0 +1,13 @@
+{
+  "configs": [
+    {
+      "algo": "mpi",
+      "cutset": "ett",
+      "sketch": "fixed",
+      "hybrid": false,
+      "batch_size": 100,
+      "num_tiers": "derived*1.7",
+      "speed_interval": 1000000
+    }
+  ]
+}

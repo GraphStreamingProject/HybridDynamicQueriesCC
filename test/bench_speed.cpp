@@ -673,6 +673,15 @@ int main(int argc, char** argv) {
         int overall_max_link_tier = -1;
         bool append_space_report = false;
         const std::string space_output_path = cfg.output_path.empty() ? std::string() : static_snapshot_path_from(cfg.output_path);
+
+        // Memory snapshot at stream start (before any inserts).
+        auto start_space = get_space_reports(system);
+        log_space_snapshot("start_stream", 0, static_total_updates, start_space);
+        if (!space_output_path.empty()) {
+          write_space_report_tsv(start_space, space_output_path, append_space_report, 0);
+          append_space_report = true;
+        }
+
         for (const auto& e : static_edges) {
             GraphUpdate op;
             op.type = INSERT;
@@ -996,6 +1005,15 @@ int main(int argc, char** argv) {
             int overall_max_link_tier = -1;
             bool append_space_report = false;
             const std::string space_output_path = cfg.output_path.empty() ? std::string() : static_snapshot_path_from(cfg.output_path);
+
+            // Memory snapshot at stream start (before any inserts).
+            auto start_space = get_space_reports(system);
+            log_space_snapshot("start_stream", 0, static_total_updates, start_space);
+            if (!space_output_path.empty()) {
+              write_space_report_tsv(start_space, space_output_path, append_space_report, 0);
+              append_space_report = true;
+            }
+
             for (const auto& e : static_edges) {
                 GraphUpdate op;
                 op.type = INSERT;

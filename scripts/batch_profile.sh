@@ -59,7 +59,7 @@ Options:
     --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
     --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
-    --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold)
+    --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
     --threshold-factor N  Hybrid threshold multiplier (threshold = N * num_tiers, default: 20)
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
@@ -539,21 +539,44 @@ process_stream() {
                 fi
 
                 local config_num_tiers=""
+                local tier_resolution_desc=""
                 if [[ -z "$cfg_num_tiers" ]]; then
                     config_num_tiers="$active_num_tiers"
+                    tier_resolution_desc="implicit-active(${active_num_tiers})"
                 elif [[ "$cfg_num_tiers" == "default" ]]; then
                     config_num_tiers=""
+                    tier_resolution_desc="default(binary)"
                 elif [[ "$cfg_num_tiers" == "derived" ]]; then
                     if [[ -n "$derived_tiers" ]]; then
                         config_num_tiers="$derived_tiers"
+                        tier_resolution_desc="derived(${derived_tiers})"
                     else
                         config_num_tiers="$active_num_tiers"
+                        tier_resolution_desc="derived-fallback-active(${active_num_tiers})"
                     fi
+                elif [[ "$cfg_num_tiers" =~ ^derived(\*|x)([0-9]+([.][0-9]+)?)$ ]]; then
+                    local multiplier="${BASH_REMATCH[2]}"
+                    local base_tiers=""
+                    if [[ -n "$derived_tiers" ]]; then
+                        base_tiers="$derived_tiers"
+                    else
+                        base_tiers="$active_num_tiers"
+                    fi
+
+                    if [[ -z "$base_tiers" || ! "$base_tiers" =~ ^[0-9]+$ ]]; then
+                        echo "Error: could not resolve base tiers for num_tiers spec '$cfg_num_tiers' in config '$spec'."
+                        exit 1
+                    fi
+
+                    config_num_tiers="$(awk -v base="$base_tiers" -v mult="$multiplier" 'BEGIN { v = base * mult; if (v < 1.0) v = 1.0; print int(v == int(v) ? v : v + 1) }')"
+                    tier_resolution_desc="derived*${multiplier}(base=${base_tiers} -> ceil=${config_num_tiers})"
                 elif [[ "$cfg_num_tiers" =~ ^[0-9]+$ ]]; then
                     config_num_tiers="$cfg_num_tiers"
+                    tier_resolution_desc="explicit(${cfg_num_tiers})"
                 else
-                    echo "Warning: ignoring invalid num_tiers '$cfg_num_tiers' in config '$spec'"
+                    echo "Warning: ignoring invalid num_tiers '$cfg_num_tiers' in config '$spec' (expected: default, derived, derived*F, or integer)"
                     config_num_tiers="$active_num_tiers"
+                    tier_resolution_desc="invalid->active(${active_num_tiers})"
                 fi
 
                 local tiers_for_np="$config_num_tiers"
@@ -599,6 +622,11 @@ process_stream() {
                 if [[ "$cfg_hybrid" == "true" ]]; then
                     args+=(--hybrid)
                     [[ -n "$threshold_to_use" ]] && args+=(--hybrid-threshold "$threshold_to_use")
+                fi
+                if [[ "$cfg_hybrid" == "true" ]]; then
+                    echo "Resolved config params: algo=${cfg_algo}, cutset=${cfg_cutset}, sketch=${cfg_sketch}, num_tiers=${tiers_for_np}, np=${config_np}, num_tiers_spec='${cfg_num_tiers:-<implicit>}' (${tier_resolution_desc}), hybrid_threshold=${threshold_to_use}"
+                else
+                    echo "Resolved config params: algo=${cfg_algo}, cutset=${cfg_cutset}, sketch=${cfg_sketch}, num_tiers=${tiers_for_np}, np=${config_np}, num_tiers_spec='${cfg_num_tiers:-<implicit>}' (${tier_resolution_desc})"
                 fi
                 register_config "${args[@]}"
             done
