@@ -159,9 +159,11 @@ void TierNode<TreeStrategy>::main() {
         // ======================================================================================
         int end_update_idx = using_sliding_window ? minimum_isolated_update+1 : num_updates+1;
         for (int update_idx = minimum_isolated_update; update_idx < end_update_idx; update_idx++) {
-            GraphUpdate update = update_buffer[update_idx].update;
+            UpdateMessage replay_update_message;
+            bcast(&replay_update_message, sizeof(UpdateMessage), 0);
+            GraphUpdate update = replay_update_message.update;
             edge_id_t edge = VERTICES_TO_EDGE(update.edge.src, update.edge.dst);
-            const uint32_t cut_start_tier = update_buffer[update_idx].cut_start_tier;
+            const uint32_t cut_start_tier = replay_update_message.cut_start_tier;
             unlikely_if (update.type == DELETE && cut_start_tier != UINT32_MAX && tier_num >= cut_start_tier) {
                 ett.cut(update.edge.src, update.edge.dst);
             }

@@ -159,7 +159,8 @@ void InputNode::process_updates() {
         unlikely_if (split_revert_buffer[update_idx-1] != MAX_INT) {
             query_forest.link(update.edge.src, update.edge.dst, static_cast<int8_t>(split_revert_buffer[update_idx-1]));
             tree_ops_count++;
-            if (split_revert_buffer[update_idx-1] > _max_link_tier) _max_link_tier = split_revert_buffer[update_idx-1];
+            // do not count rollbacks
+            // if (split_revert_buffer[update_idx-1] > _max_link_tier) _max_link_tier = split_revert_buffer[update_idx-1];
             // Rollback links are provisional and must not leak to the external
             // transaction log consumed by the hybrid manager.
         }
@@ -176,15 +177,24 @@ void InputNode::process_updates() {
     int end_update_idx = using_sliding_window ? minimum_isolated_update+1 : num_updates+1;
     for (int update_idx = minimum_isolated_update; update_idx < end_update_idx; update_idx++) {
         GraphUpdate update = update_buffer[update_idx].update;
+        UpdateMessage replay_update_message;
+        replay_update_message.update = update;
+        replay_update_message.cut_start_tier = UINT32_MAX;
+        replay_update_message.status = UPDATE_NORMAL;
         START(dt_operation_timer1);
         // Re-evaluate delete cuts against the live forest state during replay.
         // Precomputed cut_start_tier can be stale after rollback/refresh relinks.
         unlikely_if (update.type == DELETE && query_forest.has_edge(update.edge.src, update.edge.dst)) {
+            std::pair<Edge, int8_t> max_edge = query_forest.path_query(update.edge.src, update.edge.dst);
+            replay_update_message.cut_start_tier = static_cast<uint32_t>(max_edge.second);
             query_forest.cut(update.edge.src, update.edge.dst);
             tree_ops_count++;
             // transaction_log.add(update.edge, DELETE);
             transaction_log.push_back(update);
         }
+        // Broadcast the replay-time cut tier so tier nodes apply deletes using
+        // fresh state rather than stale batch prepass metadata.
+        bcast(&replay_update_message, sizeof(UpdateMessage), 0);
         STOP(dt_operation_time, dt_operation_timer1);
         uint32_t start_tier = 0;
         normal_refreshes++;
