@@ -1,3 +1,13 @@
+
+This is an anonymized repo for the SIGMOD 2027 submission *Hybrid-Sketching Methods for Dynamic Connectivity on Sparse Graphs*. 
+
+This code solves the dynamic connectivity problem: it takes in a dynamic stream of edge insertions and deletions that define a graph, and can answer connectivity queries during any time in the stream. 
+Each query is of the form `(u,v)` and returns `true` if `u` and `v` are currently connected and `false` otherwise.
+
+The main innovation of this system is using lossy graph-sketching techniques to represent the dense-core of the input graph, while representing the sparse periphery losslessly.
+
+The system is built with `C++20` and tested against x86 Linux, with `gcc>=11.5`. `openmpi` is the only explicit dependency. 
+
 ### Building
 
 The typical CMake command is:
