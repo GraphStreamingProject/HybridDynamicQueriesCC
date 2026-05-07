@@ -1,6 +1,4 @@
 
-This is an anonymized repo for the SIGMOD 2027 submission *Hybrid-Sketching Methods for Dynamic Connectivity on Sparse Graphs*. 
-
 This code solves the dynamic connectivity problem: it takes in a dynamic stream of edge insertions and deletions that define a graph, and can answer connectivity queries during any time in the stream. 
 Each query is of the form `(u,v)` and returns `true` if `u` and `v` are currently connected and `false` otherwise.
 
@@ -22,7 +20,7 @@ For Cluster Forest:
 ./bench_speed_cf [args]
 ```
 
-For HybridCC:
+For HybridSCALE:
 ```
 mpirun -np <num_processes> ./bench_speed_mpi_batch_lct_resizeable_hybrid [args]
 ```
