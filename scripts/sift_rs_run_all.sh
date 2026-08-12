@@ -2,7 +2,6 @@
 
 # Define dataset sizes
 SIZES=("10K" "20K" "30K" "40K" "50K" "60K")
-BASE_PATH="/ssd1/quinten/hybrid_project"
 
 echo "Starting benchmarks..."
 

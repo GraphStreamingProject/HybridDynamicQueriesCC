@@ -24,6 +24,7 @@ HEIGHT_FACTOR=""
 NUM_TIERS=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
+STREAM_SEED=""
 DATASET_CONFIG=""
 DATASET_BASE_DIR=""
 BATCH_CONFIG_JSON=""
@@ -61,6 +62,7 @@ Options:
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
     --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 20)
+    --hybrid-threshold-multiplier N  Alias for --threshold-factor
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
@@ -72,6 +74,7 @@ Options:
     --num-tiers N         Forward num tiers to bench_profile
     --recovery-size N     Forward recovery sketch size to bench_profile
     --move-to-sketch N    Forward move-to-sketch threshold to bench_profile
+    --stream-seed N       Reproducible static graph ordering seed (default: 42)
     --static-graph|--static  Run static graph mode in bench_profile
     --do-deletions        In static mode, include delete phase
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
@@ -123,6 +126,10 @@ while [[ $# -gt 0 ]]; do
             THRESHOLD_FACTOR="$2"
             shift 2
             ;;
+        --hybrid-threshold-multiplier)
+            THRESHOLD_FACTOR="$2"
+            shift 2
+            ;;
         --slurm)
             SLURM_MODE=true
             shift
@@ -169,6 +176,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --move-to-sketch)
             MOVE_TO_SKETCH="$2"
+            shift 2
+            ;;
+        --stream-seed)
+            STREAM_SEED="$2"
             shift 2
             ;;
         --static-graph|--static)
@@ -380,6 +391,7 @@ BASE_BENCH_ARGS=()
 [[ -n "$HEIGHT_FACTOR" ]] && BASE_BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
 [[ -n "$RECOVERY_SIZE" ]] && BASE_BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
 [[ -n "$MOVE_TO_SKETCH" ]] && BASE_BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
+[[ -n "$STREAM_SEED" ]] && BASE_BENCH_ARGS+=(--stream-seed "$STREAM_SEED")
 $STATIC_GRAPH && BASE_BENCH_ARGS+=(--static-graph)
 $DO_DELETIONS && BASE_BENCH_ARGS+=(--do-deletions)
 

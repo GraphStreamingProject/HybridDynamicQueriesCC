@@ -203,6 +203,10 @@ static ProfileConfig parse_args(int argc, char** argv) {
             exit(1);
           }
         }
+        else {
+          std::cerr << "Unknown argument: " << arg << std::endl;
+          exit(1);
+        }
     }
     return cfg;
 }

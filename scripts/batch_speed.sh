@@ -66,6 +66,7 @@ Options:
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
     --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 20)
+    --hybrid-threshold-multiplier N  Alias for --threshold-factor
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
@@ -133,6 +134,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --threshold-factor)
+            THRESHOLD_FACTOR="$2"
+            shift 2
+            ;;
+        --hybrid-threshold-multiplier)
             THRESHOLD_FACTOR="$2"
             shift 2
             ;;

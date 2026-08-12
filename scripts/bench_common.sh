@@ -24,6 +24,7 @@ NP=""
 MPI_FLAGS=""
 RANK0_CPUS="1"
 HYBRID_THRESHOLD=""
+HYBRID_THRESHOLD_MULTIPLIER=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
 SPEED_INTERVAL=""
@@ -53,6 +54,7 @@ bench_parse_common_args() {
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
       (--rank0-cpus)       RANK0_CPUS="$2"; shift 2;;
       (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
+      (--hybrid-threshold-multiplier) HYBRID_THRESHOLD_MULTIPLIER="$2"; shift 2;;
       (--recovery-size)    RECOVERY_SIZE="$2"; shift 2;;
       (--move-to-sketch)   MOVE_TO_SKETCH="$2"; shift 2;;
       (--static-graph|--static) STATIC_GRAPH=true; shift;;
@@ -90,6 +92,7 @@ bench_parse_common_args() {
         echo "  --height-factor <F>    Override height factor"
         echo "  --num-tiers <N>        Override number of tiers"
         echo "  --hybrid-threshold <N> Override hybrid threshold"
+        echo "  --hybrid-threshold-multiplier <M>  Set threshold to M * num_tiers"
         echo "  --recovery-size <N>    Override recovery sketch size (default: hybrid-threshold/8)"
         echo "  --move-to-sketch <N>   Override move-to-sketch threshold (hybrid only)"
         echo "  --static-graph | --static  Treat input as static graph edge list"
@@ -119,6 +122,26 @@ bench_parse_common_args() {
   if [[ -z "$STREAM" ]]; then
     echo "ERROR: --stream is required"
     exit 1
+  fi
+
+  if [[ -n "$HYBRID_THRESHOLD_MULTIPLIER" ]]; then
+    if [[ -n "$HYBRID_THRESHOLD" ]]; then
+      echo "ERROR: specify only one of --hybrid-threshold or --hybrid-threshold-multiplier"
+      exit 1
+    fi
+    if ! [[ "$HYBRID_THRESHOLD_MULTIPLIER" =~ ^[0-9]+$ ]] || [[ "$HYBRID_THRESHOLD_MULTIPLIER" -lt 1 ]]; then
+      echo "ERROR: --hybrid-threshold-multiplier must be a positive integer"
+      exit 1
+    fi
+    local threshold_tiers="$NUM_TIERS"
+    if [[ -z "$threshold_tiers" && "$NP" =~ ^[0-9]+$ && "$NP" -gt 1 ]]; then
+      threshold_tiers=$((NP - 1))
+    fi
+    if ! [[ "$threshold_tiers" =~ ^[0-9]+$ ]] || [[ "$threshold_tiers" -lt 1 ]]; then
+      echo "ERROR: --hybrid-threshold-multiplier requires --num-tiers N or --np N (for MPI)."
+      exit 1
+    fi
+    HYBRID_THRESHOLD=$((HYBRID_THRESHOLD_MULTIPLIER * threshold_tiers))
   fi
 
   if ! [[ "$RANK0_CPUS" =~ ^[0-9]+$ ]] || [[ "$RANK0_CPUS" -lt 1 ]]; then

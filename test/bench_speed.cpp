@@ -277,6 +277,10 @@ static BenchConfig parse_args(int argc, char** argv) {
           }
         }
         else if (arg == "--speed-interval" && i + 1 < argc) cfg.speed_interval = std::atol(argv[++i]);
+        else {
+          std::cerr << "Unknown argument: " << arg << std::endl;
+          exit(1);
+        }
     }
     return cfg;
 }
