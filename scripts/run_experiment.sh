@@ -7,7 +7,8 @@
 #     --streams "/path/kron_13,/path/kron_15" \
 #     --output-root results/ \
 #     [--np 23] [--batch-size 100] [--auto-build] \
-#     [--mpi-flags "..."] [--hybrid-threshold N] [--report-interval N]
+#     [--mpi-flags "..."] [--hybrid-threshold N]
+#     [--speed-interval N] [--profile-interval N]
 
 set -euo pipefail
 
@@ -24,7 +25,8 @@ HEIGHT_FACTOR=""
 NUM_TIERS=""
 MPI_FLAGS=""
 HYBRID_THRESHOLD=""
-REPORT_INTERVAL=""
+SPEED_INTERVAL=""
+PROFILE_INTERVAL=""
 AUTO_BUILD=""
 
 # Parse arguments
@@ -40,7 +42,8 @@ while [[ $# -gt 0 ]]; do
     (--num-tiers)        NUM_TIERS="$2"; shift 2;;
     (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
     (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
-    (--report-interval)  REPORT_INTERVAL="$2"; shift 2;;
+    (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
+    (--profile-interval|--report-interval) PROFILE_INTERVAL="$2"; shift 2;;
     (--auto-build)       AUTO_BUILD="--auto-build"; shift;;
     (*) echo "Unknown argument: $1"; exit 1;;
   esac
@@ -64,7 +67,8 @@ COMMON_FLAGS=()
 [[ -n "$NUM_TIERS" ]]        && COMMON_FLAGS+=(--num-tiers "$NUM_TIERS")
 [[ -n "$MPI_FLAGS" ]]        && COMMON_FLAGS+=(--mpi-flags "$MPI_FLAGS")
 [[ -n "$HYBRID_THRESHOLD" ]] && COMMON_FLAGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
-[[ -n "$REPORT_INTERVAL" ]]  && COMMON_FLAGS+=(--report-interval "$REPORT_INTERVAL")
+[[ "$TYPE" == "speed" && -n "$SPEED_INTERVAL" ]] && COMMON_FLAGS+=(--speed-interval "$SPEED_INTERVAL")
+[[ "$TYPE" == "profile" && -n "$PROFILE_INTERVAL" ]] && COMMON_FLAGS+=(--profile-interval "$PROFILE_INTERVAL")
 [[ -n "$AUTO_BUILD" ]]       && COMMON_FLAGS+=("$AUTO_BUILD")
 
 IFS=',' read -ra CONFIG_ARR <<< "$CONFIGS"

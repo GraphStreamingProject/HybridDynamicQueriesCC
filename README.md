@@ -24,6 +24,15 @@ Dynamic streams report total query time, throughput, and average query latency. 
 
 Query time is reported separately from insert/delete timings. The batch driver accepts both flags directly and from JSON batch configurations. For the standard interleaved-query sweep (0, 0.2, and 5 queries per update; no post queries), use [scripts/configs/static_query_sweep.json](scripts/configs/static_query_sweep.json) with `scripts/batch_speed.sh --static-graph --batch-config ...`.
 
+### Hybrid threshold sweep
+
+[scripts/configs/hybrid_threshold_sweep.json](scripts/configs/hybrid_threshold_sweep.json) explicitly runs the MPI-batch LCT resizeable hybrid at threshold multipliers 15, 20, 25, 30, 50, 100, and 200. The runners resolve each multiplier as $M \cdot \text{num_tiers}$ for the dataset. Use the same configuration for time and space experiments:
+
+```
+scripts/batch_speed.sh --dataset-config datasets.csv --batch-config scripts/configs/hybrid_threshold_sweep.json
+scripts/batch_profile.sh --dataset-config datasets.csv --batch-config scripts/configs/hybrid_threshold_sweep.json
+```
+
 For Cluster Forest:
 ```
 ./bench_speed_cf [args]

@@ -11,8 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+source "${SCRIPT_DIR}/batch_manifest.sh"
+BENCH_TYPE="profile"
 OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR:-${HOME}/sketch_results}"
-NUM_RUNS="${NUM_RUNS:-2}"
+NUM_RUNS="${NUM_RUNS:-1}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
 MPI_ALGO="mpi_batch"
@@ -25,10 +27,11 @@ NUM_TIERS=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
 STREAM_SEED=""
+PROFILE_INTERVAL="${PROFILE_INTERVAL:-1000000}"
 DATASET_CONFIG=""
 DATASET_BASE_DIR=""
 BATCH_CONFIG_JSON=""
-THRESHOLD_FACTOR="${THRESHOLD_FACTOR:-20}"
+THRESHOLD_FACTOR="${THRESHOLD_FACTOR:-25}"
 NP_SET=false
 SLURM_MODE=false
 SLURM_PARTITION="long-40core"
@@ -55,13 +58,13 @@ Options:
     --np N                Fallback MPI ranks only when num_tiers is unspecified (np is always num_tiers + 1)
     --cpus-per-task N     CPUs per MPI rank for SLURM jobs (default: 1)
     --rank0-cpus N        Extra core binding for rank 0 (default: 1)
-  --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 2)
+    --num-runs N          Number of run batches per stream (default: NUM_RUNS env var or 1)
   --output-base-dir DIR Base output directory (default: OUTPUT_BASE_DIR env var or \$HOME/sketch_results)
     --mpi-flags "..."    Extra mpirun flags (default: MPI_FLAGS env var)
     --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
-    --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 20)
+    --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 25)
     --hybrid-threshold-multiplier N  Alias for --threshold-factor
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
@@ -75,6 +78,7 @@ Options:
     --recovery-size N     Forward recovery sketch size to bench_profile
     --move-to-sketch N    Forward move-to-sketch threshold to bench_profile
     --stream-seed N       Reproducible static graph ordering seed (default: 42)
+    --profile-interval N  Updates between space traversals/snapshots (default: 1000000)
     --static-graph|--static  Run static graph mode in bench_profile
     --do-deletions        In static mode, include delete phase
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
@@ -182,6 +186,10 @@ while [[ $# -gt 0 ]]; do
             STREAM_SEED="$2"
             shift 2
             ;;
+        --profile-interval|--report-interval)
+            PROFILE_INTERVAL="$2"
+            shift 2
+            ;;
         --static-graph|--static)
             STATIC_GRAPH=true
             shift
@@ -251,6 +259,9 @@ fi
 if [[ "$OUTPUT_BASE_DIR" != "/" ]]; then
     OUTPUT_BASE_DIR="${OUTPUT_BASE_DIR%/}"
 fi
+mkdir -p "$OUTPUT_BASE_DIR"
+OUTPUT_BASE_DIR="$(realpath "$OUTPUT_BASE_DIR")"
+batch_manifest_init
 
 if [[ "$RANK0_CPUS" -gt 1 ]] && [[ "$CPUS_PER_TASK" -ne 1 ]]; then
     echo "Error: --rank0-cpus and --cpus-per-task>1 conflict; use cpus-per-task=1 for rank0-only expansion."
@@ -392,6 +403,7 @@ BASE_BENCH_ARGS=()
 [[ -n "$RECOVERY_SIZE" ]] && BASE_BENCH_ARGS+=(--recovery-size "$RECOVERY_SIZE")
 [[ -n "$MOVE_TO_SKETCH" ]] && BASE_BENCH_ARGS+=(--move-to-sketch "$MOVE_TO_SKETCH")
 [[ -n "$STREAM_SEED" ]] && BASE_BENCH_ARGS+=(--stream-seed "$STREAM_SEED")
+BASE_BENCH_ARGS+=(--profile-interval "$PROFILE_INTERVAL")
 $STATIC_GRAPH && BASE_BENCH_ARGS+=(--static-graph)
 $DO_DELETIONS && BASE_BENCH_ARGS+=(--do-deletions)
 
@@ -426,6 +438,11 @@ register_config() {
     local sketch="resizeable"
     local hybrid=false
     local threshold=""
+    local manifest_batch_size="$BATCH_SIZE"
+    local manifest_height_factor="$HEIGHT_FACTOR"
+    local manifest_num_tiers=""
+    local manifest_np=""
+    local manifest_profile_interval="$PROFILE_INTERVAL"
 
     local i=0
     while [[ $i -lt ${#config_args[@]} ]]; do
@@ -435,6 +452,10 @@ register_config() {
             --sketch) sketch="${config_args[$((i+1))]}"; i=$((i+2));;
             --hybrid) hybrid=true; i=$((i+1));;
             --hybrid-threshold) threshold="${config_args[$((i+1))]}"; i=$((i+2));;
+            --batch-size) manifest_batch_size="${config_args[$((i+1))]}"; i=$((i+2));;
+            --num-tiers) manifest_num_tiers="${config_args[$((i+1))]}"; i=$((i+2));;
+            --np) manifest_np="${config_args[$((i+1))]}"; i=$((i+2));;
+            --profile-interval|--report-interval) manifest_profile_interval="${config_args[$((i+1))]}"; i=$((i+2));;
             *) i=$((i+1));;
         esac
     done
@@ -454,6 +475,29 @@ register_config() {
     local full_config_path="${CURRENT_OUTPUT_DIR}/${cfg_name}"
     local run_suffix
     run_suffix=$(get_next_run_suffix "${full_config_path}")
+    local run_dir="${full_config_path}/${run_suffix}"
+    local stream_basename
+    stream_basename="$(basename "$CURRENT_STREAM_FILE")"
+    local space_path="${run_dir}/${stream_basename}_space.tsv"
+    local status_path="${run_dir}/run_status.tsv"
+    local stdout_path="${run_dir}/run_stdout.log"
+    local stderr_path="${run_dir}/run_stderr.log"
+    local threshold_multiplier=""
+    if [[ -n "$threshold" && "$manifest_num_tiers" =~ ^[0-9]+$ && "$manifest_num_tiers" -gt 0 && $((threshold % manifest_num_tiers)) -eq 0 ]]; then
+        threshold_multiplier="$((threshold / manifest_num_tiers))"
+    fi
+    local manifest_path
+    manifest_path="$(batch_manifest_path_for_dataset)"
+    batch_manifest_append "$manifest_path" \
+        "$CURRENT_STREAM_NAME" "$CURRENT_DATASET_NODES" "$CURRENT_DATASET_EDGES" \
+        "$BENCH_TYPE" "${run:-1}" "$run_suffix" "$cfg_name" \
+        "$algo" "$cutset" "$sketch" "$hybrid" "$threshold" "$threshold_multiplier" \
+        "$manifest_batch_size" "$manifest_height_factor" "$manifest_num_tiers" "$manifest_np" \
+        "$RECOVERY_SIZE" "$MOVE_TO_SKETCH" "$STREAM_SEED" "" "" "" "$manifest_profile_interval" \
+        "$STATIC_GRAPH" "$DO_DELETIONS" \
+        "$CURRENT_STREAM_FILE" "" "" "" "$space_path" \
+        "${space_path%.tsv}_summary.tsv" "${space_path%.tsv}_hybrid_summary.tsv" \
+        "${run_dir}/${stream_basename}_summary.tsv" "$status_path" "$stdout_path" "$stderr_path"
     local mpi_args=()
     if [[ -n "$MPI_FLAGS" ]]; then
         mpi_args+=(--mpi-flags "$MPI_FLAGS")
@@ -470,6 +514,10 @@ register_config() {
         local cmd
         cmd="cd $(printf '%q' "$(dirname "$SCRIPT_DIR")")"
         cmd+=" && "
+        cmd+=$(printf '%q' "${SCRIPT_DIR}/run_with_status.sh")
+        cmd+=" --status $(printf '%q' "$status_path")"
+        cmd+=" --stdout $(printf '%q' "$stdout_path")"
+        cmd+=" --stderr $(printf '%q' "$stderr_path") -- "
         cmd+=$(printf '%q' "${SCRIPT_DIR}/run_profile.sh")
         for arg in "${mpi_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
         for arg in "${CURRENT_BENCH_ARGS[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
@@ -479,7 +527,12 @@ register_config() {
         echo "$cmd" >> "$SLURM_TASK_FILE"
         SLURM_TASK_COUNT=$((SLURM_TASK_COUNT + 1))
     else
-        "${SCRIPT_DIR}/run_profile.sh" "${CURRENT_BENCH_ARGS[@]}" "${config_args[@]}" "${mpi_args[@]}" --run-suffix "${run_suffix}"
+        if ! "${SCRIPT_DIR}/run_with_status.sh" \
+                --status "$status_path" --stdout "$stdout_path" --stderr "$stderr_path" -- \
+                "${SCRIPT_DIR}/run_profile.sh" "${CURRENT_BENCH_ARGS[@]}" \
+                "${config_args[@]}" "${mpi_args[@]}" --run-suffix "${run_suffix}"; then
+            echo "Warning: profile run failed for ${CURRENT_STREAM_NAME}/${cfg_name}/${run_suffix}; continuing batch." >&2
+        fi
     fi
 }
 
@@ -487,6 +540,7 @@ process_stream() {
     local stream_name="$1"
     local stream_file="$2"
     local num_nodes="${3:-}"
+    local num_edges="${4:-}"
 
     if [[ ! -f "$stream_file" ]]; then
         echo "Warning: Stream file not found: $stream_file. Skipping."
@@ -495,6 +549,8 @@ process_stream() {
 
     CURRENT_STREAM_NAME="$stream_name"
     CURRENT_STREAM_FILE="$stream_file"
+    CURRENT_DATASET_NODES="$num_nodes"
+    CURRENT_DATASET_EDGES="$num_edges"
     CURRENT_OUTPUT_DIR="${OUTPUT_BASE_DIR}/${stream_name}"
 
     echo "=========================================================="
@@ -544,9 +600,17 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
-                    register_config --algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build
+                    local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
+                    if [[ -n "$cfg_profile_interval" ]]; then
+                        if [[ "$cfg_profile_interval" =~ ^[0-9]+$ ]]; then
+                            cf_args+=(--profile-interval "$cfg_profile_interval")
+                        else
+                            echo "Warning: ignoring non-numeric profile_interval '$cfg_profile_interval' in config '$spec'"
+                        fi
+                    fi
+                    register_config "${cf_args[@]}"
                     continue
                 fi
 
@@ -631,6 +695,13 @@ process_stream() {
                         echo "Warning: ignoring non-numeric batch_size '$cfg_batch_size' in config '$spec'"
                     fi
                 fi
+                if [[ -n "$cfg_profile_interval" ]]; then
+                    if [[ "$cfg_profile_interval" =~ ^[0-9]+$ ]]; then
+                        args+=(--profile-interval "$cfg_profile_interval")
+                    else
+                        echo "Warning: ignoring non-numeric profile_interval '$cfg_profile_interval' in config '$spec'"
+                    fi
+                fi
                 if [[ "$cfg_hybrid" == "true" ]]; then
                     args+=(--hybrid)
                     [[ -n "$threshold_to_use" ]] && args+=(--hybrid-threshold "$threshold_to_use")
@@ -667,7 +738,7 @@ process_stream() {
 
 if [[ -n "$DATASET_CONFIG" ]]; then
     for i in "${!DATASET_NAMES[@]}"; do
-        process_stream "${DATASET_NAMES[$i]}" "${DATASET_PATHS[$i]}" "${DATASET_NODES[$i]}"
+        process_stream "${DATASET_NAMES[$i]}" "${DATASET_PATHS[$i]}" "${DATASET_NODES[$i]}" "${DATASET_EDGES[$i]}"
     done
 else
     for stream_file in "${STREAM_FILES[@]}"; do
@@ -718,6 +789,8 @@ if $SLURM_MODE; then
     echo "Submitting job array with ${SLURM_TASK_COUNT} tasks..."
     echo "Task file: ${SLURM_TASK_FILE}"
     sbatch ${SBATCH_ARGS} "$JOB_SCRIPT"
+    batch_manifest_print_slurm_instructions
 else
+    batch_manifest_summarize_local
     echo "Batch profiling complete. Results are in ${OUTPUT_BASE_DIR}"
 fi

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <set>
@@ -118,7 +119,7 @@ struct Config {
   int recovery_size = 0;
   int move_to_sketch = 0;
   long repeats = 1;
-  long check_interval = 1000000;
+  long check_interval = 100000;
   bool static_graph = false;
   bool do_deletions = false;
   uint64_t seed = 0;
@@ -270,11 +271,41 @@ template <typename System>
 static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
                          const std::vector<std::pair<node_id_t, node_id_t>>& static_edges,
                          long repeat, uint64_t seed) {
+  constexpr long kProgressInterval = 1'000'000;
   Result result;
   result.repeat = repeat;
   result.seed = seed;
   std::unordered_set<edge_id_t> active_edges;
   const auto started = std::chrono::steady_clock::now();
+  const long total_updates = cfg.static_graph
+      ? static_cast<long>(static_edges.size()) * (cfg.do_deletions ? 2L : 1L)
+      : BinaryGraphStream(cfg.input_path, 100000).edges();
+
+  auto print_progress = [&] {
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    const double updates_per_second = elapsed_ms > 0
+        ? static_cast<double>(result.updates) * 1000.0 / static_cast<double>(elapsed_ms)
+        : 0.0;
+    const long remaining_updates = std::max(0L, total_updates - result.updates);
+    const long estimated_remaining_ms = updates_per_second > 0.0
+        ? static_cast<long>(static_cast<double>(remaining_updates) * 1000.0 / updates_per_second)
+        : 0L;
+    const double progress_percent = total_updates > 0
+        ? static_cast<double>(result.updates) * 100.0 / static_cast<double>(total_updates)
+        : 100.0;
+    const auto original_flags = std::cout.flags();
+    const auto original_precision = std::cout.precision();
+    std::cout << "[correctness] repeat " << repeat << "/" << cfg.repeats
+              << " progress: " << result.updates << "/" << total_updates
+              << " (" << std::fixed << std::setprecision(1) << progress_percent << "%, checks="
+              << result.checks << ", rate=" << std::setprecision(0) << updates_per_second
+              << " updates/s, elapsed=" << elapsed_ms / 1000.0
+              << "s, eta=" << estimated_remaining_ms / 1000.0 << "s, "
+              << (result.correct ? "correct" : "incorrect") << ")" << std::endl;
+    std::cout.flags(original_flags);
+    std::cout.precision(original_precision);
+  };
 
   auto check = [&](const std::string& phase) {
     ++result.checks;
@@ -303,6 +334,7 @@ static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
     system.update(update);
     ++result.updates;
     if (result.updates % cfg.check_interval == 0) check(phase);
+    if (result.updates % kProgressInterval == 0) print_progress();
   };
 
   if (cfg.static_graph) {
@@ -426,7 +458,8 @@ int main(int argc, char** argv) {
         system.end();
         std::cout << "[correctness] repeat " << result.repeat << "/" << cfg.repeats
             << ": " << (result.correct ? "correct" : "incorrect")
-            << " (checks=" << result.checks << ", updates=" << result.updates << ")"
+          << " (checks=" << result.checks << ", updates=" << result.updates
+          << ", elapsed=" << result.elapsed_ms / 1000.0 << "s)"
             << std::endl;
         results.push_back(std::move(result));
       } else {
@@ -450,7 +483,8 @@ int main(int argc, char** argv) {
       Result result = run_repeat(system, cfg, num_nodes, static_edges, repeat, repeat_seed);
       std::cout << "[correctness] repeat " << result.repeat << "/" << cfg.repeats
             << ": " << (result.correct ? "correct" : "incorrect")
-            << " (checks=" << result.checks << ", updates=" << result.updates << ")"
+        << " (checks=" << result.checks << ", updates=" << result.updates
+        << ", elapsed=" << result.elapsed_ms / 1000.0 << "s)"
             << std::endl;
       results.push_back(std::move(result));
 #endif

@@ -4,7 +4,7 @@
 # Usage (component-level):
 #   scripts/run_profile.sh --algo mpi --cutset ufo --stream <path>
 #     [--sketch resizeable] [--hybrid] [--np 23] [--auto-build]
-#     [--output-dir results/profile] [--report-interval 1000000]
+#     [--output-dir results/profile] [--profile-interval 1000000]
 #
 # Usage (direct config):
 #   scripts/run_profile.sh --config mpi_ufo_resizeable --stream <path>
@@ -18,15 +18,15 @@
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "${SCRIPT_DIR}/bench_common.sh"
 
-# Extra args: --output-dir, --report-interval, --list, --run-suffix
+# Extra args: --output-dir, --profile-interval, --list, --run-suffix
 OUTPUT_DIR="results/profile"
-REPORT_INTERVAL="1000000"
+PROFILE_INTERVAL="1000000"
 RUN_SUFFIX=""
 
 bench_parse_extra_arg() {
   case "$1" in
     (--output-dir)      OUTPUT_DIR="$2"; return 2;;
-    (--report-interval) REPORT_INTERVAL="$2"; return 2;;
+    (--profile-interval|--report-interval) PROFILE_INTERVAL="$2"; return 2;;
     (--run-suffix)      RUN_SUFFIX="$2"; return 2;;
     (--list)            bench_list "profile"; exit 0;;
     (*) echo "Unknown argument: $1"; exit 1;;
@@ -46,6 +46,6 @@ mkdir -p "${FINAL_OUTPUT_DIR}"
 
 # The binary expects --output-dir to be the final destination for its TSVs.
 BENCH_ARGS+=(--output-dir "$FINAL_OUTPUT_DIR")
-BENCH_ARGS+=(--report-interval "$REPORT_INTERVAL")
+BENCH_ARGS+=(--profile-interval "$PROFILE_INTERVAL")
 
 bench_run

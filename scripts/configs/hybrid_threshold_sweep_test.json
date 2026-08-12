@@ -1,0 +1,49 @@
+{
+  "configs": [
+    {
+      "algo": "mpi",
+      "cutset": "ett",
+      "sketch": "fixed",
+      "hybrid": false,
+      "batch_size": 100,
+      "num_tiers": "derived*1.7",
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    },
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "resizeable",
+      "hybrid": true,
+      "batch_size": 10000,
+      "hybrid_threshold_multiplier": 25,
+      "num_tiers": "derived",
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    },
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "resizeable",
+      "hybrid": true,
+      "batch_size": 10000,
+      "hybrid_threshold_multiplier": 50,
+      "num_tiers": "derived",
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    },
+    {
+      "algo": "cf",
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    }
+  ]
+}

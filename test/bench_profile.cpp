@@ -6,7 +6,7 @@
  *
  * Runtime parameters (CLI):
  *   <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N]
- *                 [--output-dir dir] [--report-interval N]
+ *                 [--output-dir dir] [--profile-interval N]
  *                 [--static-graph] [--static] [--do-deletions]
  */
 
@@ -165,7 +165,7 @@ struct ProfileConfig {
   int recovery_size = 0;
     int move_to_sketch = 0;
     std::string output_dir = "results/profile";
-    long report_interval = 1000000;
+    long profile_interval = 1000000;
     bool static_graph = false;
     bool do_deletions = false;
     uint64_t stream_seed = 42;
@@ -177,7 +177,7 @@ static ProfileConfig parse_args(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0]
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] "
-                     "[--output-dir dir] [--report-interval N] "
+                     "[--output-dir dir] [--profile-interval N] "
                      "[--static-graph] [--static] [--do-deletions] [--stream-seed N]"
                   << std::endl;
         exit(1);
@@ -192,7 +192,9 @@ static ProfileConfig parse_args(int argc, char** argv) {
         else if (arg == "--recovery-size" && i + 1 < argc) cfg.recovery_size = std::atoi(argv[++i]);
         else if (arg == "--move-to-sketch" && i + 1 < argc) cfg.move_to_sketch = std::atoi(argv[++i]);
         else if (arg == "--output-dir" && i + 1 < argc) cfg.output_dir = argv[++i];
-        else if (arg == "--report-interval" && i + 1 < argc) cfg.report_interval = std::atol(argv[++i]);
+        else if ((arg == "--profile-interval" || arg == "--report-interval") && i + 1 < argc) {
+          cfg.profile_interval = std::atol(argv[++i]);
+        }
         else if (arg == "--static-graph" || arg == "--static") cfg.static_graph = true;
         else if (arg == "--do-deletions") cfg.do_deletions = true;
         else if (arg == "--stream-seed" && i + 1 < argc) {
@@ -366,13 +368,14 @@ int main(int argc, char** argv) {
                 ++processed_updates;
 
               const long op_index = i + 1;
-              if (op_index % cfg.report_interval == 0 || op_index == edgecount) {
+              if (op_index % cfg.profile_interval == 0 && op_index != edgecount) {
                 emit_report(op_index, static_total_updates);
-                }
+              }
             }
 #if IS_HYBRID
             system.force_sync();
 #endif
+            emit_report(edgecount, static_total_updates);
             if (cfg.do_deletions) {
                 std::cout << "[profile][static] insert phase complete; starting delete phase (updates "
                       << (edgecount + 1) << "-" << static_total_updates << " of " << static_total_updates
@@ -387,13 +390,14 @@ int main(int argc, char** argv) {
                     ++processed_updates;
 
                     long op_index = edgecount + i + 1;
-                    if (op_index % cfg.report_interval == 0 || op_index == (2 * edgecount)) {
+                    if (op_index % cfg.profile_interval == 0 && op_index != (2 * edgecount)) {
                       emit_report(op_index, static_total_updates);
                     }
                 }
 #if IS_HYBRID
                 system.force_sync();
 #endif
+                emit_report(2 * edgecount, static_total_updates);
             }
         } else {
                 long applied_updates = 0;
@@ -407,12 +411,12 @@ int main(int argc, char** argv) {
                 ++applied_updates;
                 ++processed_updates;
 
-                  if (applied_updates % cfg.report_interval == 0) {
+                  if (applied_updates % cfg.profile_interval == 0) {
                     emit_report(applied_updates);
                 }
             }
 
-                if (applied_updates > 0 && applied_updates % cfg.report_interval != 0) {
+                if (applied_updates > 0 && applied_updates % cfg.profile_interval != 0) {
                   emit_report(applied_updates);
                 }
         }
