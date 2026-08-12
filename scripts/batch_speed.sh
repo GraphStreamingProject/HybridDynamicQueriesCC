@@ -15,11 +15,17 @@ NUM_RUNS="${NUM_RUNS:-2}"
 NP="${NP:-23}"
 MPI_FLAGS="${MPI_FLAGS:-}"
 MPI_ALGO="mpi_batch"
+BENCH_TYPE="speed"
 RANK0_CPUS="1"
 STATIC_GRAPH=false
 DO_DELETIONS=false
 NUM_QUERIES=""
+POST_QUERIES_PER_UPDATE=""
+INTERLEAVED_QUERIES_PER_UPDATE=""
+STREAM_SEED=""
 SPEED_INTERVAL=""
+CORRECTNESS_REPEATS=""
+CORRECTNESS_CHECK_INTERVAL=""
 BATCH_SIZE=""
 HEIGHT_FACTOR=""
 NUM_TIERS=""
@@ -59,7 +65,7 @@ Options:
     --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
-    --threshold-factor N  Hybrid threshold multiplier (threshold = N * num_tiers, default: 20)
+    --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 20)
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
@@ -74,7 +80,13 @@ Options:
     --static-graph|--static  Run static graph mode in bench_speed
     --do-deletions        In static mode, include delete phase
     --num-queries N|P%    In static mode, run N queries or P%% of insert count
+    --post-queries-per-update C  Run round(C * static updates) queries after inserts
+    --interleaved-queries-per-update C  Poisson-schedule queries across static updates
+    --stream-seed N       Reproducible graph/query seed (default: 42)
     --speed-interval N    Periodic update speed report interval
+    --bench-type TYPE      Benchmark type: speed or correctness (default: speed)
+    --correctness-repeats N  Repeated correctness executions per config
+    --correctness-check-interval N  Full partition check interval
   --slurm-log-dir DIR   Directory for SLURM job scripts and logs
   -h, --help            Show this help text
 EOF
@@ -184,8 +196,32 @@ while [[ $# -gt 0 ]]; do
             NUM_QUERIES="$2"
             shift 2
             ;;
+        --post-queries-per-update)
+            POST_QUERIES_PER_UPDATE="$2"
+            shift 2
+            ;;
+        --interleaved-queries-per-update)
+            INTERLEAVED_QUERIES_PER_UPDATE="$2"
+            shift 2
+            ;;
+        --stream-seed)
+            STREAM_SEED="$2"
+            shift 2
+            ;;
         --speed-interval)
             SPEED_INTERVAL="$2"
+            shift 2
+            ;;
+        --bench-type)
+            BENCH_TYPE="$2"
+            shift 2
+            ;;
+        --correctness-repeats)
+            CORRECTNESS_REPEATS="$2"
+            shift 2
+            ;;
+        --correctness-check-interval)
+            CORRECTNESS_CHECK_INTERVAL="$2"
             shift 2
             ;;
         -h|--help)
@@ -238,6 +274,11 @@ fi
 
 if [[ "$MPI_ALGO" != "mpi" && "$MPI_ALGO" != "mpi_batch" ]]; then
     echo "Error: --mpi-algo must be 'mpi' or 'mpi_batch' (got '$MPI_ALGO')."
+    exit 1
+fi
+
+if [[ "$BENCH_TYPE" != "speed" && "$BENCH_TYPE" != "correctness" ]]; then
+    echo "Error: --bench-type must be 'speed' or 'correctness' (got '$BENCH_TYPE')."
     exit 1
 fi
 
@@ -384,6 +425,11 @@ if [[ -n "$BATCH_CONFIG_JSON" ]]; then
     load_batch_config_json "$BATCH_CONFIG_JSON"
 fi
 
+if [[ "$BENCH_TYPE" == "correctness" && ${#RUN_CONFIG_SPECS[@]} -eq 0 ]]; then
+    echo "Error: correctness batch runs require --batch-config with tier configurations."
+    exit 1
+fi
+
 BASE_BENCH_ARGS=()
 [[ -n "$BATCH_SIZE" ]] && BASE_BENCH_ARGS+=(--batch-size "$BATCH_SIZE")
 [[ -n "$HEIGHT_FACTOR" ]] && BASE_BENCH_ARGS+=(--height-factor "$HEIGHT_FACTOR")
@@ -392,7 +438,12 @@ BASE_BENCH_ARGS=()
 $STATIC_GRAPH && BASE_BENCH_ARGS+=(--static-graph)
 $DO_DELETIONS && BASE_BENCH_ARGS+=(--do-deletions)
 [[ -n "$NUM_QUERIES" ]] && BASE_BENCH_ARGS+=(--num-queries "$NUM_QUERIES")
-[[ -n "$SPEED_INTERVAL" ]] && BASE_BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
+[[ -n "$POST_QUERIES_PER_UPDATE" ]] && BASE_BENCH_ARGS+=(--post-queries-per-update "$POST_QUERIES_PER_UPDATE")
+[[ -n "$INTERLEAVED_QUERIES_PER_UPDATE" ]] && BASE_BENCH_ARGS+=(--interleaved-queries-per-update "$INTERLEAVED_QUERIES_PER_UPDATE")
+[[ -n "$STREAM_SEED" ]] && BASE_BENCH_ARGS+=(--stream-seed "$STREAM_SEED")
+[[ "$BENCH_TYPE" == "speed" && -n "$SPEED_INTERVAL" ]] && BASE_BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
+[[ -n "$CORRECTNESS_REPEATS" ]] && BASE_BENCH_ARGS+=(--correctness-repeats "$CORRECTNESS_REPEATS")
+[[ -n "$CORRECTNESS_CHECK_INTERVAL" ]] && BASE_BENCH_ARGS+=(--correctness-check-interval "$CORRECTNESS_CHECK_INTERVAL")
 
 CURRENT_OUTPUT_DIR=""
 CURRENT_STREAM_NAME=""
@@ -405,7 +456,7 @@ SLURM_TASK_COUNT=0
 if $SLURM_MODE; then
     SLURM_LOG_DIR="${SLURM_LOG_DIR:-${OUTPUT_BASE_DIR}/slurm_logs}"
     mkdir -p "$SLURM_LOG_DIR"
-    SLURM_TASK_FILE="${SLURM_LOG_DIR}/speed_tasks_$(date +%Y%m%d_%H%M%S).txt"
+    SLURM_TASK_FILE="${SLURM_LOG_DIR}/${BENCH_TYPE}_tasks_$(date +%Y%m%d_%H%M%S).txt"
     : > "$SLURM_TASK_FILE"
 fi
 
@@ -458,7 +509,7 @@ register_config() {
     local full_config_path="${CURRENT_OUTPUT_DIR}/${cfg_name}"
     local run_suffix
     run_suffix=$(get_next_run_suffix "${full_config_path}")
-    local output_file="${full_config_path}/${run_suffix}/${CURRENT_STREAM_NAME}_speed.tsv"
+    local output_file="${full_config_path}/${run_suffix}/${CURRENT_STREAM_NAME}_${BENCH_TYPE}.tsv"
     local mpi_args=()
     if [[ -n "$MPI_FLAGS" ]]; then
         mpi_args+=(--mpi-flags "$MPI_FLAGS")
@@ -475,7 +526,7 @@ register_config() {
         local cmd
         cmd="cd $(printf '%q' "$(dirname "$SCRIPT_DIR")")"
         cmd+=" && "
-        cmd+=$(printf '%q' "${SCRIPT_DIR}/run_speed.sh")
+        cmd+=$(printf '%q' "${SCRIPT_DIR}/run_${BENCH_TYPE}.sh")
         for arg in "${mpi_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
         for arg in "${CURRENT_BENCH_ARGS[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
         for arg in "${config_args[@]}"; do cmd+=" $(printf '%q' "$arg")"; done
@@ -484,7 +535,7 @@ register_config() {
         echo "$cmd" >> "$SLURM_TASK_FILE"
         SLURM_TASK_COUNT=$((SLURM_TASK_COUNT + 1))
     else
-        "${SCRIPT_DIR}/run_speed.sh" "${CURRENT_BENCH_ARGS[@]}" "${config_args[@]}" "${mpi_args[@]}" --output "$output_file"
+        "${SCRIPT_DIR}/run_${BENCH_TYPE}.sh" "${CURRENT_BENCH_ARGS[@]}" "${config_args[@]}" "${mpi_args[@]}" --output "$output_file"
     fi
 }
 
@@ -531,7 +582,7 @@ process_stream() {
 
     if [[ -n "$num_nodes" ]]; then
         derived_threshold="$((THRESHOLD_FACTOR * active_num_tiers))"
-        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, default_hybrid_threshold=${derived_threshold}"
+        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, default_hybrid_threshold=${derived_threshold} (${THRESHOLD_FACTOR} * num_tiers)"
     fi
 
     if [[ "$active_np" =~ ^[0-9]+$ ]] && [[ "$active_np" -gt "$MAX_NP_REQUIRED" ]]; then
@@ -549,8 +600,12 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
+                    if [[ "$BENCH_TYPE" == "correctness" ]]; then
+                        echo "Error: correctness benchmarks do not support the cf configuration."
+                        exit 1
+                    fi
                     local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
                     if [[ -n "$cfg_speed_interval" ]]; then
                         if [[ "$cfg_speed_interval" =~ ^[0-9]+$ ]]; then
@@ -559,6 +614,8 @@ process_stream() {
                             echo "Warning: ignoring non-numeric speed_interval '$cfg_speed_interval' in config '$spec'"
                         fi
                     fi
+                    [[ -n "$cfg_post_queries_per_update" ]] && cf_args+=(--post-queries-per-update "$cfg_post_queries_per_update")
+                    [[ -n "$cfg_interleaved_queries_per_update" ]] && cf_args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")
                     register_config "${cf_args[@]}"
                     continue
                 fi
@@ -650,12 +707,24 @@ process_stream() {
                         echo "Warning: ignoring non-numeric batch_size '$cfg_batch_size' in config '$spec'"
                     fi
                 fi
-                if [[ -n "$cfg_speed_interval" ]]; then
+                if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_speed_interval" ]]; then
                     if [[ "$cfg_speed_interval" =~ ^[0-9]+$ ]]; then
                         args+=(--speed-interval "$cfg_speed_interval")
                     else
                         echo "Warning: ignoring non-numeric speed_interval '$cfg_speed_interval' in config '$spec'"
                     fi
+                fi
+                if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_post_queries_per_update" ]]; then
+                    args+=(--post-queries-per-update "$cfg_post_queries_per_update")
+                fi
+                if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_interleaved_queries_per_update" ]]; then
+                    args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")
+                fi
+                if [[ "$BENCH_TYPE" == "correctness" && -n "$cfg_correctness_repeats" ]]; then
+                    args+=(--correctness-repeats "$cfg_correctness_repeats")
+                fi
+                if [[ "$BENCH_TYPE" == "correctness" && -n "$cfg_correctness_check_interval" ]]; then
+                    args+=(--correctness-check-interval "$cfg_correctness_check_interval")
                 fi
                 if [[ "$cfg_hybrid" == "true" ]]; then
                     args+=(--hybrid)
@@ -664,21 +733,15 @@ process_stream() {
                 register_config "${args[@]}"
             done
         else
-            if [[ -n "$derived_threshold" ]]; then
+            for multiplier in 15 20 25 30 50 100 200; do
+                local threshold
+                threshold="$((multiplier * active_num_tiers))"
                 local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                     --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
-                    --hybrid --hybrid-threshold "$derived_threshold" --auto-build)
+                    --hybrid --hybrid-threshold "$threshold" --auto-build)
                 [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
                 register_config "${hybrid_args[@]}"
-            else
-                for threshold in 1200 2500 500 250; do
-                    local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-                        --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
-                        --hybrid --hybrid-threshold "$threshold" --auto-build)
-                    [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
-                    register_config "${hybrid_args[@]}"
-                done
-            fi
+            done
 
             local pure_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                 --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \

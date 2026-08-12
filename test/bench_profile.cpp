@@ -12,12 +12,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -166,6 +168,7 @@ struct ProfileConfig {
     long report_interval = 1000000;
     bool static_graph = false;
     bool do_deletions = false;
+    uint64_t stream_seed = 42;
 };
 
 static ProfileConfig parse_args(int argc, char** argv) {
@@ -175,7 +178,7 @@ static ProfileConfig parse_args(int argc, char** argv) {
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] "
                      "[--output-dir dir] [--report-interval N] "
-                     "[--static-graph] [--static] [--do-deletions]"
+                     "[--static-graph] [--static] [--do-deletions] [--stream-seed N]"
                   << std::endl;
         exit(1);
     }
@@ -192,6 +195,14 @@ static ProfileConfig parse_args(int argc, char** argv) {
         else if (arg == "--report-interval" && i + 1 < argc) cfg.report_interval = std::atol(argv[++i]);
         else if (arg == "--static-graph" || arg == "--static") cfg.static_graph = true;
         else if (arg == "--do-deletions") cfg.do_deletions = true;
+        else if (arg == "--stream-seed" && i + 1 < argc) {
+          try {
+            cfg.stream_seed = std::stoull(argv[++i]);
+          } catch (const std::exception&) {
+            std::cerr << "--stream-seed must be an unsigned integer." << std::endl;
+            exit(1);
+          }
+        }
     }
     return cfg;
 }
@@ -338,7 +349,7 @@ int main(int argc, char** argv) {
 
         if (cfg.static_graph) {
             const long static_total_updates = edgecount + (cfg.do_deletions ? edgecount : 0);
-            std::mt19937 gen(seed);
+            std::mt19937 gen(static_cast<uint32_t>(cfg.stream_seed));
             std::shuffle(static_edges.begin(), static_edges.end(), gen);
             std::cout << "[profile][static] starting insert phase (updates 1-" << edgecount
                   << " of " << static_total_updates << ")" << std::endl;

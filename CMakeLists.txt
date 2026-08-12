@@ -301,7 +301,8 @@ set(MPI_BENCH_SOURCES
 )
 
 # Function: add_bench_targets(NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE)
-# Creates bench_speed_<NAME> and bench_profile_<NAME>
+# Creates bench_speed_<NAME>, bench_profile_<NAME>, and for non-CF
+# configurations, bench_correctness_<NAME>.
 function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE)
   # Determine source files and link libraries based on tier algo
   if(CUPCAKE_ALGO STREQUAL "mpi_tiers" OR CUPCAKE_ALGO STREQUAL "MPI_TIERS"
@@ -348,6 +349,39 @@ function(add_bench_targets NAME CUPCAKE_ALGO CUTSET_DS USE_HYBRID USE_RESIZEABLE
     target_compile_options(${TARGET_NAME} PUBLIC -fopenmp)
     target_link_options(${TARGET_NAME} PUBLIC -fopenmp)
   endforeach()
+
+  if(NOT CUPCAKE_ALGO STREQUAL "CF")
+    set(TARGET_NAME "bench_correctness_${NAME}")
+    add_executable(${TARGET_NAME}
+      test/bench_correctness.cpp
+      ${_SOURCES}
+    )
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+      CUPCAKE_ALGO_${CUPCAKE_ALGO}=1
+      CUTSET_DS_${CUTSET_DS}=1
+      USE_HYBRID=${USE_HYBRID}
+      SKETCH_BUFFER_SIZE=${SKETCH_BUFFER_SIZE}
+    )
+    if(USE_RESIZEABLE)
+      target_compile_definitions(${TARGET_NAME} PRIVATE USE_RESIZEABLE_SKETCH=1)
+    endif()
+    if(FIXED_NONHYBRID_VECTOR_CONTAINERS AND (NOT USE_HYBRID))
+      target_compile_definitions(${TARGET_NAME} PRIVATE USE_VECTOR_DEFAULT_CONTAINER=1)
+    endif()
+    if(USE_PARALLEL_HYBRID AND USE_HYBRID)
+      target_compile_definitions(${TARGET_NAME} PRIVATE USE_PARALLEL_HYBRID=1)
+    endif()
+    if(ENABLE_DIRECT_SKETCH AND USE_HYBRID)
+      target_compile_definitions(${TARGET_NAME} PRIVATE ENABLE_DIRECT_SKETCH=1)
+    endif()
+    target_include_directories(${TARGET_NAME} PUBLIC include ${MPI_C_INCLUDE_PATH})
+    add_dependencies(${TARGET_NAME} GraphZeppelinVerifyCC dycon)
+    target_link_libraries(${TARGET_NAME} PRIVATE
+      GraphZeppelinVerifyCC dycon ${MPI_LIBRARIES} ${_EXTRA_LIBS}
+    )
+    target_compile_options(${TARGET_NAME} PUBLIC -fopenmp)
+    target_link_options(${TARGET_NAME} PUBLIC -fopenmp)
+  endif()
 endfunction()
 
 # ---- Generate benchmark targets ----

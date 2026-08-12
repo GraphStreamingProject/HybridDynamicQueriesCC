@@ -15,6 +15,15 @@ cmake .. -DBUILD_BENCH=no -DCMAKE_BUILD_TYPE=Release -DSKETCH_BUFFER_SIZE=1 -DPA
 
 There are many executables for various versions of our system. There are "bench_speed_" executables which simply get the running time, and "bench_profile_" executables get various properties periodically such as memory usage.
 
+### Speed benchmark queries
+
+Dynamic streams report total query time, throughput, and average query latency. Static graph runs support rate-based random vertex-pair workloads in addition to the existing `--num-queries` option:
+
+- `--post-queries-per-update C` runs `round(C * U)` queries after all inserts and before optional deletes, where $U$ is the number of static insert/delete updates.
+- `--interleaved-queries-per-update C` places queries throughout all static updates using an exponential-interarrival Poisson schedule with expected $C * U$ queries. Rates above one are supported.
+
+Query time is reported separately from insert/delete timings. The batch driver accepts both flags directly and from JSON batch configurations. For the standard interleaved-query sweep (0, 0.2, and 5 queries per update; no post queries), use [scripts/configs/static_query_sweep.json](scripts/configs/static_query_sweep.json) with `scripts/batch_speed.sh --static-graph --batch-config ...`.
+
 For Cluster Forest:
 ```
 ./bench_speed_cf [args]

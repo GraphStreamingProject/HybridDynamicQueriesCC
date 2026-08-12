@@ -27,9 +27,14 @@ HYBRID_THRESHOLD=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
 SPEED_INTERVAL=""
+CORRECTNESS_REPEATS=""
+CORRECTNESS_CHECK_INTERVAL=""
 STATIC_GRAPH=false
 DO_DELETIONS=false
 NUM_QUERIES=""
+POST_QUERIES_PER_UPDATE=""
+INTERLEAVED_QUERIES_PER_UPDATE=""
+STREAM_SEED=""
 AUTO_BUILD=false
 
 bench_parse_common_args() {
@@ -53,7 +58,12 @@ bench_parse_common_args() {
       (--static-graph|--static) STATIC_GRAPH=true; shift;;
       (--do-deletions)     DO_DELETIONS=true; shift;;
       (--num-queries)      NUM_QUERIES="$2"; shift 2;;
+      (--post-queries-per-update) POST_QUERIES_PER_UPDATE="$2"; shift 2;;
+      (--interleaved-queries-per-update) INTERLEAVED_QUERIES_PER_UPDATE="$2"; shift 2;;
+      (--stream-seed)      STREAM_SEED="$2"; shift 2;;
       (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
+      (--correctness-repeats) CORRECTNESS_REPEATS="$2"; shift 2;;
+      (--correctness-check-interval) CORRECTNESS_CHECK_INTERVAL="$2"; shift 2;;
       (--auto-build)       AUTO_BUILD=true; shift;;
       (*)                  local _n=0; bench_parse_extra_arg "$@" || _n=$?; shift "$_n";;
     esac
@@ -85,6 +95,9 @@ bench_parse_common_args() {
         echo "  --static-graph | --static  Treat input as static graph edge list"
         echo "  --do-deletions         In static mode, run delete phase after insert"
         echo "  --num-queries <N|P%>   Static-mode query count (absolute or percentage of inserts)"
+        echo "  --post-queries-per-update <C>  Run round(C * static updates) queries after inserts"
+        echo "  --interleaved-queries-per-update <C>  Poisson-schedule queries across static updates"
+        echo "  --stream-seed <N>      Reproducible graph/query seed (default: 42)"
         echo "  --auto-build           Build binary if not found"
         exit 1
       fi
@@ -144,7 +157,12 @@ bench_build_args() {
   $STATIC_GRAPH                 && BENCH_ARGS+=(--static-graph)
   $DO_DELETIONS                 && BENCH_ARGS+=(--do-deletions)
   [[ -n "$NUM_QUERIES" ]]      && BENCH_ARGS+=(--num-queries "$NUM_QUERIES")
+  [[ -n "$POST_QUERIES_PER_UPDATE" ]] && BENCH_ARGS+=(--post-queries-per-update "$POST_QUERIES_PER_UPDATE")
+  [[ -n "$INTERLEAVED_QUERIES_PER_UPDATE" ]] && BENCH_ARGS+=(--interleaved-queries-per-update "$INTERLEAVED_QUERIES_PER_UPDATE")
+  [[ -n "$STREAM_SEED" ]]      && BENCH_ARGS+=(--stream-seed "$STREAM_SEED")
   [[ -n "$SPEED_INTERVAL" ]]   && BENCH_ARGS+=(--speed-interval "$SPEED_INTERVAL")
+  [[ -n "$CORRECTNESS_REPEATS" ]] && BENCH_ARGS+=(--correctness-repeats "$CORRECTNESS_REPEATS")
+  [[ -n "$CORRECTNESS_CHECK_INTERVAL" ]] && BENCH_ARGS+=(--correctness-check-interval "$CORRECTNESS_CHECK_INTERVAL")
   return 0
 }
 

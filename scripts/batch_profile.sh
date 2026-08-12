@@ -60,7 +60,7 @@ Options:
     --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
-    --threshold-factor N  Hybrid threshold multiplier (threshold = N * num_tiers, default: 20)
+    --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 20)
     --slurm               Submit each config as a separate SLURM job
     --no-exclusive        Do not request exclusive node allocation for SLURM jobs
   --slurm-partition P   SLURM partition (default: long-40core; max 48h, 6 nodes, 3 concurrent jobs)
@@ -514,7 +514,7 @@ process_stream() {
 
     if [[ -n "$num_nodes" ]]; then
         derived_threshold="$((THRESHOLD_FACTOR * active_num_tiers))"
-        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, hybrid_threshold=${derived_threshold}"
+        echo "Derived params: num_nodes=${num_nodes}, num_tiers=${active_num_tiers}, np=${active_np}, hybrid_threshold=${derived_threshold} (${THRESHOLD_FACTOR} * num_tiers)"
     fi
 
     if [[ "$active_np" =~ ^[0-9]+$ ]] && [[ "$active_np" -gt "$MAX_NP_REQUIRED" ]]; then
@@ -631,21 +631,15 @@ process_stream() {
                 register_config "${args[@]}"
             done
         else
-            if [[ -n "$derived_threshold" ]]; then
+            for multiplier in 15 20 25 30 50 100 200; do
+                local threshold
+                threshold="$((multiplier * active_num_tiers))"
                 local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                     --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
-                    --hybrid --hybrid-threshold "$derived_threshold" --auto-build)
+                    --hybrid --hybrid-threshold "$threshold" --auto-build)
                 [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
                 register_config "${hybrid_args[@]}"
-            else
-                for threshold in 1200 2500 500 250; do
-                    local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-                        --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
-                        --hybrid --hybrid-threshold "$threshold" --auto-build)
-                    [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
-                    register_config "${hybrid_args[@]}"
-                done
-            fi
+            done
 
             local pure_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                 --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \

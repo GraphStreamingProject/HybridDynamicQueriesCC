@@ -8,12 +8,14 @@
  *
  * Runtime parameters (CLI):
  * <stream_path> [--batch-size N] [--height-factor F] [--num-tiers N] [--output path.tsv]
- * [--static-graph] [--do-deletions] [--num-queries N|P%] [--speed-interval N]
+ * [--static-graph] [--do-deletions] [--num-queries N|P%]
+ * [--post-queries-per-update C] [--interleaved-queries-per-update C] [--speed-interval N]
  *
  * For MPI configs, launch via mpirun.
  */
 
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -173,6 +175,10 @@ struct BenchConfig {
     size_t num_queries = 0;
     double num_queries_percent = 0.0;
     bool num_queries_is_percent = false;
+    // Static-only query workloads, expressed as queries per static update.
+    double post_queries_per_update = 0.0;
+    double interleaved_queries_per_update = 0.0;
+    uint64_t stream_seed = 42;
 
     // Periodic speed reporting (0 = disabled)
     long speed_interval = 0;
@@ -211,6 +217,12 @@ struct BenchConfig {
     return static_cast<size_t>(std::floor(resolved));
   }
 
+static std::mt19937 make_rng(uint64_t seed, uint32_t stream_id) {
+  std::seed_seq sequence{
+      static_cast<uint32_t>(seed), static_cast<uint32_t>(seed >> 32), stream_id};
+  return std::mt19937(sequence);
+}
+
 static BenchConfig parse_args(int argc, char** argv) {
     BenchConfig cfg;
     if (argc < 2) {
@@ -218,6 +230,8 @@ static BenchConfig parse_args(int argc, char** argv) {
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] [--output path.tsv]\n"
                   << "        [--static-graph] [--static] [--do-deletions] [--num-queries Q|P%]\n"
+                  << "        [--post-queries-per-update C] [--interleaved-queries-per-update C]\n"
+                  << "        [--stream-seed N]  (default: 42; controls randomized graph/query inputs)\n"
                   << "        [--speed-interval N]  (report time every N updates, default: disabled)"
                   << std::endl;
         exit(1);
@@ -237,6 +251,28 @@ static BenchConfig parse_args(int argc, char** argv) {
         else if (arg == "--num-queries" && i + 1 < argc) {
           if (!parse_num_queries_spec(argv[++i], cfg)) {
             std::cerr << "Invalid --num-queries value. Use an integer (e.g. 1000) or percentage (e.g. 1%)." << std::endl;
+            exit(1);
+          }
+        }
+        else if (arg == "--post-queries-per-update" && i + 1 < argc) {
+          cfg.post_queries_per_update = std::atof(argv[++i]);
+          if (!std::isfinite(cfg.post_queries_per_update) || cfg.post_queries_per_update < 0.0) {
+            std::cerr << "--post-queries-per-update must be a non-negative number." << std::endl;
+            exit(1);
+          }
+        }
+        else if (arg == "--interleaved-queries-per-update" && i + 1 < argc) {
+          cfg.interleaved_queries_per_update = std::atof(argv[++i]);
+          if (!std::isfinite(cfg.interleaved_queries_per_update) || cfg.interleaved_queries_per_update < 0.0) {
+            std::cerr << "--interleaved-queries-per-update must be a non-negative number." << std::endl;
+            exit(1);
+          }
+        }
+        else if (arg == "--stream-seed" && i + 1 < argc) {
+          try {
+            cfg.stream_seed = std::stoull(argv[++i]);
+          } catch (const std::exception&) {
+            std::cerr << "--stream-seed must be an unsigned integer." << std::endl;
             exit(1);
           }
         }
@@ -335,7 +371,7 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
                             long total_ops, long num_updates, long num_queries, long update_time_us, long query_time_us, int actual_batch_size, double actual_height_factor, int actual_num_tiers,
                             long num_edges = 0, long tree_ops = 0, int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
   out << "stream\tconfig\tnum_nodes\ttotal_ops\tnum_updates\tnum_queries\tupdate_time_ms\tquery_time_ms\t"
-           "updates_per_sec\tqueries_per_sec\tbatch_size\theight_factor\tnum_tiers\tnum_edges\ttree_ops\tmax_link_tier"
+           "updates_per_sec\tqueries_per_sec\taverage_query_latency_us\tbatch_size\theight_factor\tnum_tiers\tnum_edges\ttree_ops\tmax_link_tier"
 #if IS_HYBRID
            "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
 #endif
@@ -344,10 +380,11 @@ static void write_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std
     long query_ms = query_time_us / 1000;
     double ups = (update_ms > 0) ? (static_cast<double>(num_updates) / update_ms * 1000.0) : 0;
     double qps = (query_ms > 0) ? (static_cast<double>(num_queries) / query_ms * 1000.0) : 0;
+    double average_query_latency_us = (num_queries > 0) ? static_cast<double>(query_time_us) / num_queries : 0.0;
 
     out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << total_ops << "\t"
       << num_updates << "\t" << num_queries << "\t"
-        << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t"
+        << update_ms << "\t" << query_ms << "\t" << static_cast<long>(ups) << "\t" << static_cast<long>(qps) << "\t" << average_query_latency_us << "\t"
         << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << num_edges << "\t" << tree_ops << "\t" << max_link_tier;
 #if IS_HYBRID
   out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
@@ -362,6 +399,7 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
     long query_ms = query_time_us / 1000;
     double ups = (update_ms > 0) ? (static_cast<double>(num_updates) / update_ms * 1000.0) : 0;
     double qps = (query_ms > 0) ? (static_cast<double>(num_queries) / query_ms * 1000.0) : 0;
+    double average_query_latency_us = (num_queries > 0) ? static_cast<double>(query_time_us) / num_queries : 0.0;
 
     int w = 24;
     out << "\n" << std::string(50, '=') << "\n Benchmark Stream Results\n" << std::string(50, '=') << "\n"
@@ -375,6 +413,7 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
         << std::setw(w) << "Query Time (ms)" << ": " << query_ms << "\n"
         << std::setw(w) << "Updates/sec" << ": " << static_cast<long>(ups) << "\n"
         << std::setw(w) << "Queries/sec" << ": " << static_cast<long>(qps) << "\n"
+        << std::setw(w) << "Average Query Latency (us)" << ": " << average_query_latency_us << "\n"
         << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
         << std::setw(w) << "Num Tiers" << ": " << actual_num_tiers << "\n"
@@ -391,18 +430,79 @@ static void write_speed_report(std::ostream& out, const BenchConfig& cfg, const 
 
 // ======================= Static Output Writers =======================
 
+struct StaticQueryStats {
+  size_t count = 0;
+  long time_us = 0;
+};
+
+class PoissonQuerySchedule {
+ public:
+  PoissonQuerySchedule(double queries_per_update, long num_updates, std::mt19937& gen)
+      : enabled_(queries_per_update > 0.0 && num_updates > 0),
+        interarrival_(enabled_ ? queries_per_update : 1.0), gen_(&gen) {
+    if (enabled_) next_arrival_ = interarrival_(*gen_);
+  }
+
+  bool enabled() const { return enabled_; }
+
+  size_t queries_for_update(long update_index) {
+    if (!enabled_) return 0;
+    size_t count = 0;
+    while (next_arrival_ < static_cast<double>(update_index + 1)) {
+      ++count;
+      next_arrival_ += interarrival_(*gen_);
+    }
+    return count;
+  }
+
+ private:
+  bool enabled_;
+  std::exponential_distribution<double> interarrival_;
+  std::mt19937* gen_;
+  double next_arrival_ = 0.0;
+};
+
+template<typename System>
+static StaticQueryStats run_random_queries(System& system, size_t count, node_id_t num_nodes, std::mt19937& gen) {
+  StaticQueryStats stats;
+  if (count == 0 || num_nodes == 0) return stats;
+
+  std::uniform_int_distribution<node_id_t> node_dist(0, num_nodes - 1);
+  bool checksum = false;
+  auto timer = std::chrono::high_resolution_clock::now();
+  for (size_t i = 0; i < count; ++i) {
+    const auto u = node_dist(gen);
+    const auto v = node_dist(gen);
+  #if IS_HYBRID
+    checksum ^= system.connectivity_query(u, v);
+  #elif defined(CUPCAKE_ALGO_MPI_TIERS) || defined(CUPCAKE_ALGO_MPI_BATCH_TIERS)
+    checksum ^= system.connectivity_query(u, v);
+  #else
+    checksum ^= system.is_connected(u, v);
+  #endif
+  }
+  stats.count = count;
+  stats.time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - timer).count();
+  volatile bool escape = checksum;
+  (void)escape;
+  return stats;
+}
+
 static void write_static_speed_tsv(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
-                                   long edgecount, long ins_time_us, long q_time_us, long del_time_us,
-                                   size_t executed_num_queries,
+                                   long edgecount, long ins_time_us, long ins_phase_time_us, const StaticQueryStats& post_queries,
+                                   long del_time_us, long del_phase_time_us,
+                                   const StaticQueryStats& interleaved_queries,
                                    int actual_batch_size, double actual_height_factor, int actual_num_tiers,
                                    int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
-    out << "graph\tconfig\tnum_nodes\tedges\tnum_queries\tinserts_ms\tqueries_ms\tdeletes_ms\tbatch_size\theight_factor\tnum_tiers\tmax_link_tier"
+    out << "graph\tconfig\tnum_nodes\tedges\tnum_post_queries\tpost_queries_ms\tnum_interleaved_queries\tinterleaved_queries_ms\tinsert_update_calls_ms\tinsert_phase_wall_ms\tdelete_update_calls_ms\tdelete_phase_wall_ms\tbatch_size\theight_factor\tnum_tiers\tmax_link_tier"
 #if IS_HYBRID
            "\tsketched_edges\tdirect_sketch_inserts\tsketched_vertices"
 #endif
            "\n";
-    out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << edgecount << "\t" << executed_num_queries << "\t"
-        << (ins_time_us/1000) << "\t" << (q_time_us/1000) << "\t" << (del_time_us/1000) << "\t"
+    out << basename_of(cfg.stream_path) << "\t" << config_name << "\t" << num_nodes << "\t" << edgecount << "\t" << post_queries.count << "\t"
+      << (post_queries.time_us/1000) << "\t" << interleaved_queries.count << "\t" << (interleaved_queries.time_us/1000) << "\t"
+      << (ins_time_us/1000) << "\t" << (ins_phase_time_us/1000) << "\t"
+      << (del_time_us/1000) << "\t" << (del_phase_time_us/1000) << "\t"
         << actual_batch_size << "\t" << actual_height_factor << "\t" << actual_num_tiers << "\t" << max_link_tier;
 #if IS_HYBRID
     out << "\t" << sketched_edges << "\t" << direct_sketch_inserts << "\t" << sketched_vertices;
@@ -411,8 +511,9 @@ static void write_static_speed_tsv(std::ostream& out, const BenchConfig& cfg, co
 }
 
 static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg, const std::string& config_name, node_id_t num_nodes,
-                                      long edgecount, long ins_time_us, long q_time_us, long del_time_us,
-                                      size_t executed_num_queries,
+                                      long edgecount, long ins_time_us, long ins_phase_time_us, const StaticQueryStats& post_queries,
+                                      long del_time_us, long del_phase_time_us,
+                                      const StaticQueryStats& interleaved_queries,
                                       int actual_batch_size, double actual_height_factor, int actual_num_tiers,
                                       int max_link_tier = -1, size_t sketched_edges = 0, size_t direct_sketch_inserts = 0, size_t sketched_vertices = 0) {
     int w = 24;
@@ -421,11 +522,15 @@ static void write_static_speed_report(std::ostream& out, const BenchConfig& cfg,
         << std::setw(w) << "Configuration" << ": " << config_name << "\n"
         << std::setw(w) << "Num Nodes" << ": " << num_nodes << "\n"
         << std::setw(w) << "Total Edges" << ": " << edgecount << "\n"
-        << std::setw(w) << "Num Queries" << ": " << executed_num_queries << "\n"
-        << std::setw(w) << "Insert Phase (ms)" << ": " << (ins_time_us/1000) << "\n";
-      if (executed_num_queries > 0) out << std::setw(w) << "Query Phase (ms)" << ": " << (q_time_us/1000) << "\n";
+        << std::setw(w) << "Insert Update Calls (ms)" << ": " << (ins_time_us/1000) << "\n"
+        << std::setw(w) << "Insert Phase Wall Time (ms)" << ": " << (ins_phase_time_us/1000) << "\n";
+    out << std::setw(w) << "Post Query Count" << ": " << post_queries.count << "\n"
+        << std::setw(w) << "Post Query Time (ms)" << ": " << (post_queries.time_us/1000) << "\n"
+        << std::setw(w) << "Interleaved Query Count" << ": " << interleaved_queries.count << "\n"
+        << std::setw(w) << "Interleaved Query Time (ms)" << ": " << (interleaved_queries.time_us/1000) << "\n";
     if (cfg.do_deletions) {
-        out << std::setw(w) << "Delete Phase (ms)" << ": " << (del_time_us/1000) << "\n";
+      out << std::setw(w) << "Delete Update Calls (ms)" << ": " << (del_time_us/1000) << "\n"
+        << std::setw(w) << "Delete Phase Wall Time (ms)" << ": " << (del_phase_time_us/1000) << "\n";
     }
     out << std::setw(w) << "Batch Size" << ": " << actual_batch_size << "\n"
         << std::setw(w) << "Height Factor" << ": " << actual_height_factor << "\n"
@@ -656,18 +761,24 @@ int main(int argc, char** argv) {
 
     } else {
         // === STATIC GRAPH MODE ===
-        std::mt19937 gen(seed);
+        std::mt19937 shuffle_gen = make_rng(cfg.stream_seed, 1);
+        std::mt19937 schedule_gen = make_rng(cfg.stream_seed, 2);
+        std::mt19937 query_gen = make_rng(cfg.stream_seed, 3);
       const size_t effective_num_queries = resolve_num_queries_for_static_graph(cfg, edgecount);
       const long static_total_updates = edgecount + (cfg.do_deletions ? edgecount : 0);
+      const size_t post_query_count = effective_num_queries + static_cast<size_t>(std::llround(cfg.post_queries_per_update * static_total_updates));
+      PoissonQuerySchedule interleaved_query_schedule(cfg.interleaved_queries_per_update, static_total_updates, schedule_gen);
+      StaticQueryStats interleaved_queries;
         
         // Shuffle for insertion
-        std::shuffle(static_edges.begin(), static_edges.end(), gen);
+        std::shuffle(static_edges.begin(), static_edges.end(), shuffle_gen);
 
         // Phase 1: Inserts
         std::cout << "[speed][static] starting insert phase (updates 1-" << edgecount
             << " of " << static_total_updates << ")" << std::endl;
-        auto ins_timer = std::chrono::high_resolution_clock::now();
+        long ins_time_us = 0;
         long inserts_since_report = 0;
+        long ins_interval_update_time_us = 0;
         auto ins_interval_timer = std::chrono::high_resolution_clock::now();
         long inserted_updates = 0;
         int overall_max_link_tier = -1;
@@ -682,18 +793,30 @@ int main(int argc, char** argv) {
           append_space_report = true;
         }
 
+        const auto insert_phase_timer = std::chrono::high_resolution_clock::now();
         for (const auto& e : static_edges) {
             GraphUpdate op;
             op.type = INSERT;
             op.edge.src = e.first;
             op.edge.dst = e.second;
+            auto update_timer = std::chrono::high_resolution_clock::now();
             system.update(op);
+            const long update_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+            ins_time_us += update_time_us;
+            ins_interval_update_time_us += update_time_us;
             ++inserted_updates;
             ++inserts_since_report;
 
+            if (interleaved_query_schedule.enabled()) {
+              const auto queries = run_random_queries(system, interleaved_query_schedule.queries_for_update(inserted_updates - 1), num_nodes, query_gen);
+              interleaved_queries.count += queries.count;
+              interleaved_queries.time_us += queries.time_us;
+              if (queries.count > 0) ins_interval_timer = std::chrono::high_resolution_clock::now();
+            }
+
             if (cfg.speed_interval > 0 && inserts_since_report >= cfg.speed_interval) {
                 auto now = std::chrono::high_resolution_clock::now();
-                long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - ins_interval_timer).count();
+                long interval_ms = ins_interval_update_time_us / 1000;
                 double ups = (interval_ms > 0) ? (static_cast<double>(inserts_since_report) / interval_ms * 1000.0) : 0;
               std::cout << "[speed][static-insert] update " << inserted_updates << "/" << static_total_updates
                           << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
@@ -710,12 +833,13 @@ int main(int argc, char** argv) {
                 overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
                 system.reset_max_link_tier();
                 inserts_since_report = 0;
+                ins_interval_update_time_us = 0;
                 ins_interval_timer = now;
             }
         }
         if (cfg.speed_interval > 0 && inserts_since_report > 0) {
             auto now = std::chrono::high_resolution_clock::now();
-            long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - ins_interval_timer).count();
+            long interval_ms = ins_interval_update_time_us / 1000;
             double ups = (interval_ms > 0) ? (static_cast<double>(inserts_since_report) / interval_ms * 1000.0) : 0;
           std::cout << "[speed][static-insert] update " << inserted_updates << "/" << static_total_updates
                       << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
@@ -736,8 +860,8 @@ int main(int argc, char** argv) {
       #if IS_HYBRID
         system.force_sync();
       #endif
-        long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
-
+        const long ins_phase_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - insert_phase_timer).count();
         // Memory snapshot after all insertions (timing already captured above).
         auto post_insert_space = get_space_reports(system);
         log_space_snapshot("post_insert", edgecount, static_total_updates, post_insert_space);
@@ -747,48 +871,45 @@ int main(int argc, char** argv) {
         }
 
         // Phase 2: Queries after insert
-        long q_ins_time_us = 0;
-        if (effective_num_queries > 0) {
-          std::vector<std::pair<node_id_t, node_id_t>> queries(effective_num_queries);
-            std::uniform_int_distribution<node_id_t> node_dist(0, num_nodes - 1);
-          for (size_t i = 0; i < effective_num_queries; ++i) queries[i] = {node_dist(gen), node_dist(gen)};
-            bool query_checksum = 0;
-
-            auto q_timer = std::chrono::high_resolution_clock::now();
-            for (const auto& q : queries) {
-              #if IS_HYBRID
-                query_checksum ^= system.connectivity_query(q.first, q.second);
-              #else
-                query_checksum ^= system.is_connected(q.first, q.second);
-              #endif
-            }
-            q_ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - q_timer).count();
-            volatile uint64_t escape = query_checksum;
-        }
+        const StaticQueryStats post_queries = run_random_queries(system, post_query_count, num_nodes, query_gen);
 
         // Phase 3: Deletes
         long del_time_us = 0;
+        long del_phase_time_us = 0;
         if (cfg.do_deletions) {
           std::cout << "[speed][static] insert phase complete; starting delete phase (updates "
                 << (edgecount + 1) << "-" << static_total_updates << " of " << static_total_updates
                 << ")" << std::endl;
-            std::shuffle(static_edges.begin(), static_edges.end(), gen);
-            auto del_timer = std::chrono::high_resolution_clock::now();
+            std::shuffle(static_edges.begin(), static_edges.end(), shuffle_gen);
+            del_time_us = 0;
             long deletes_since_report = 0;
+              long del_interval_update_time_us = 0;
             auto del_interval_timer = std::chrono::high_resolution_clock::now();
             long deleted_updates = 0;
+            const auto delete_phase_timer = std::chrono::high_resolution_clock::now();
             for (const auto& e : static_edges) {
                 GraphUpdate op;
                 op.type = DELETE;
                 op.edge.src = e.first;
                 op.edge.dst = e.second;
+                auto update_timer = std::chrono::high_resolution_clock::now();
                 system.update(op);
+                const long update_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+                del_time_us += update_time_us;
+                del_interval_update_time_us += update_time_us;
                 ++deleted_updates;
                 ++deletes_since_report;
 
+                if (interleaved_query_schedule.enabled()) {
+                  const auto queries = run_random_queries(system, interleaved_query_schedule.queries_for_update(edgecount + deleted_updates - 1), num_nodes, query_gen);
+                  interleaved_queries.count += queries.count;
+                  interleaved_queries.time_us += queries.time_us;
+                  if (queries.count > 0) del_interval_timer = std::chrono::high_resolution_clock::now();
+                }
+
                 if (cfg.speed_interval > 0 && deletes_since_report >= cfg.speed_interval) {
                     auto now = std::chrono::high_resolution_clock::now();
-                    long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - del_interval_timer).count();
+                    long interval_ms = del_interval_update_time_us / 1000;
                     double ups = (interval_ms > 0) ? (static_cast<double>(deletes_since_report) / interval_ms * 1000.0) : 0;
                   const long global_update_idx = edgecount + deleted_updates;
                   std::cout << "[speed][static-delete] update " << global_update_idx << "/" << static_total_updates
@@ -806,12 +927,13 @@ int main(int argc, char** argv) {
                     overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
                     system.reset_max_link_tier();
                     deletes_since_report = 0;
+                    del_interval_update_time_us = 0;
                     del_interval_timer = now;
                 }
             }
             if (cfg.speed_interval > 0 && deletes_since_report > 0) {
                 auto now = std::chrono::high_resolution_clock::now();
-                long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - del_interval_timer).count();
+                long interval_ms = del_interval_update_time_us / 1000;
                 double ups = (interval_ms > 0) ? (static_cast<double>(deletes_since_report) / interval_ms * 1000.0) : 0;
               const long global_update_idx = edgecount + deleted_updates;
               std::cout << "[speed][static-delete] update " << global_update_idx << "/" << static_total_updates
@@ -833,7 +955,8 @@ int main(int argc, char** argv) {
           #if IS_HYBRID
             system.force_sync();
           #endif
-            del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
+            del_phase_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::high_resolution_clock::now() - delete_phase_timer).count();
         }
 
           // End-of-stream memory snapshot (after inserts + optional deletes).
@@ -853,11 +976,11 @@ int main(int argc, char** argv) {
       #endif
 
         if (cfg.output_path.empty()) {
-          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
         } else {
             std::ofstream out(cfg.output_path);
-          write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
-          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+          write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+          write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
         }
     }
 
@@ -990,16 +1113,22 @@ int main(int argc, char** argv) {
 
         } else {
             // === STATIC GRAPH MODE (MPI) ===
-            std::mt19937 gen(seed);
+            std::mt19937 shuffle_gen = make_rng(cfg.stream_seed, 1);
+            std::mt19937 schedule_gen = make_rng(cfg.stream_seed, 2);
+            std::mt19937 query_gen = make_rng(cfg.stream_seed, 3);
           const size_t effective_num_queries = resolve_num_queries_for_static_graph(cfg, edgecount);
           const long static_total_updates = edgecount + (cfg.do_deletions ? edgecount : 0);
+          const size_t post_query_count = effective_num_queries + static_cast<size_t>(std::llround(cfg.post_queries_per_update * static_total_updates));
+          PoissonQuerySchedule interleaved_query_schedule(cfg.interleaved_queries_per_update, static_total_updates, schedule_gen);
+          StaticQueryStats interleaved_queries;
             
-            std::shuffle(static_edges.begin(), static_edges.end(), gen);
+            std::shuffle(static_edges.begin(), static_edges.end(), shuffle_gen);
 
             std::cout << "[speed][static] starting insert phase (updates 1-" << edgecount
                       << " of " << static_total_updates << ")" << std::endl;
-            auto ins_timer = std::chrono::high_resolution_clock::now();
+            long ins_time_us = 0;
             long inserts_since_report = 0;
+            long ins_interval_update_time_us = 0;
             auto ins_interval_timer = std::chrono::high_resolution_clock::now();
             long inserted_updates = 0;
             int overall_max_link_tier = -1;
@@ -1014,18 +1143,30 @@ int main(int argc, char** argv) {
               append_space_report = true;
             }
 
+            const auto insert_phase_timer = std::chrono::high_resolution_clock::now();
             for (const auto& e : static_edges) {
                 GraphUpdate op;
                 op.type = INSERT;
                 op.edge.src = e.first;
                 op.edge.dst = e.second;
+                auto update_timer = std::chrono::high_resolution_clock::now();
                 system.update(op);
+                const long update_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+                ins_time_us += update_time_us;
+                ins_interval_update_time_us += update_time_us;
                 ++inserted_updates;
                 ++inserts_since_report;
 
+                if (interleaved_query_schedule.enabled()) {
+                  const auto queries = run_random_queries(system, interleaved_query_schedule.queries_for_update(inserted_updates - 1), num_nodes, query_gen);
+                  interleaved_queries.count += queries.count;
+                  interleaved_queries.time_us += queries.time_us;
+                  if (queries.count > 0) ins_interval_timer = std::chrono::high_resolution_clock::now();
+                }
+
                 if (cfg.speed_interval > 0 && inserts_since_report >= cfg.speed_interval) {
                     auto now = std::chrono::high_resolution_clock::now();
-                    long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - ins_interval_timer).count();
+                    long interval_ms = ins_interval_update_time_us / 1000;
                     double ups = (interval_ms > 0) ? (static_cast<double>(inserts_since_report) / interval_ms * 1000.0) : 0;
                   std::cout << "[speed][static-insert] update " << inserted_updates << "/" << static_total_updates
                               << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
@@ -1042,12 +1183,13 @@ int main(int argc, char** argv) {
                     overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
                     system.reset_max_link_tier();
                     inserts_since_report = 0;
+                    ins_interval_update_time_us = 0;
                     ins_interval_timer = now;
                 }
             }
             if (cfg.speed_interval > 0 && inserts_since_report > 0) {
                 auto now = std::chrono::high_resolution_clock::now();
-                long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - ins_interval_timer).count();
+                long interval_ms = ins_interval_update_time_us / 1000;
                 double ups = (interval_ms > 0) ? (static_cast<double>(inserts_since_report) / interval_ms * 1000.0) : 0;
               std::cout << "[speed][static-insert] update " << inserted_updates << "/" << static_total_updates
                           << "  last " << inserts_since_report << " updates in " << interval_ms << " ms"
@@ -1067,8 +1209,8 @@ int main(int argc, char** argv) {
           #if IS_HYBRID
             system.force_sync();
           #endif
-            long ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - ins_timer).count();
-
+            const long ins_phase_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::high_resolution_clock::now() - insert_phase_timer).count();
             // Memory snapshot after all insertions (timing already captured above).
             auto post_insert_space = get_space_reports(system);
             log_space_snapshot("post_insert", edgecount, static_total_updates, post_insert_space);
@@ -1076,42 +1218,44 @@ int main(int argc, char** argv) {
                 write_space_report_tsv(post_insert_space, space_output_path, append_space_report, edgecount);
                 append_space_report = true;
             }
-            bool query_checksum = 0;
-
-            long q_ins_time_us = 0;
-            if (effective_num_queries > 0) {
-              std::vector<std::pair<node_id_t, node_id_t>> queries(effective_num_queries);
-                std::uniform_int_distribution<node_id_t> node_dist(0, num_nodes - 1);
-              for (size_t i = 0; i < effective_num_queries; ++i) queries[i] = {node_dist(gen), node_dist(gen)};
-                
-                auto q_timer = std::chrono::high_resolution_clock::now();
-                for (const auto& q : queries) query_checksum ^= system.connectivity_query(q.first, q.second);
-                q_ins_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - q_timer).count();
-            }
-            volatile uint64_t escape = query_checksum;
+            const StaticQueryStats post_queries = run_random_queries(system, post_query_count, num_nodes, query_gen);
 
             long del_time_us = 0;
+            long del_phase_time_us = 0;
             if (cfg.do_deletions) {
               std::cout << "[speed][static] insert phase complete; starting delete phase (updates "
                     << (edgecount + 1) << "-" << static_total_updates << " of " << static_total_updates
                     << ")" << std::endl;
-                std::shuffle(static_edges.begin(), static_edges.end(), gen);
-                auto del_timer = std::chrono::high_resolution_clock::now();
+                std::shuffle(static_edges.begin(), static_edges.end(), shuffle_gen);
+                del_time_us = 0;
                 long deletes_since_report = 0;
+                long del_interval_update_time_us = 0;
                 auto del_interval_timer = std::chrono::high_resolution_clock::now();
                 long deleted_updates = 0;
+                const auto delete_phase_timer = std::chrono::high_resolution_clock::now();
                 for (const auto& e : static_edges) {
                     GraphUpdate op;
                     op.type = DELETE;
                     op.edge.src = e.first;
                     op.edge.dst = e.second;
+                    auto update_timer = std::chrono::high_resolution_clock::now();
                     system.update(op);
+                    const long update_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - update_timer).count();
+                    del_time_us += update_time_us;
+                    del_interval_update_time_us += update_time_us;
                     ++deleted_updates;
                     ++deletes_since_report;
 
+                    if (interleaved_query_schedule.enabled()) {
+                      const auto queries = run_random_queries(system, interleaved_query_schedule.queries_for_update(edgecount + deleted_updates - 1), num_nodes, query_gen);
+                      interleaved_queries.count += queries.count;
+                      interleaved_queries.time_us += queries.time_us;
+                      if (queries.count > 0) del_interval_timer = std::chrono::high_resolution_clock::now();
+                    }
+
                     if (cfg.speed_interval > 0 && deletes_since_report >= cfg.speed_interval) {
                         auto now = std::chrono::high_resolution_clock::now();
-                        long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - del_interval_timer).count();
+                        long interval_ms = del_interval_update_time_us / 1000;
                         double ups = (interval_ms > 0) ? (static_cast<double>(deletes_since_report) / interval_ms * 1000.0) : 0;
                       const long global_update_idx = edgecount + deleted_updates;
                       std::cout << "[speed][static-delete] update " << global_update_idx << "/" << static_total_updates
@@ -1129,12 +1273,13 @@ int main(int argc, char** argv) {
                         overall_max_link_tier = std::max(overall_max_link_tier, system.get_max_link_tier());
                         system.reset_max_link_tier();
                         deletes_since_report = 0;
+                        del_interval_update_time_us = 0;
                         del_interval_timer = now;
                     }
                 }
                 if (cfg.speed_interval > 0 && deletes_since_report > 0) {
                     auto now = std::chrono::high_resolution_clock::now();
-                    long interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - del_interval_timer).count();
+                    long interval_ms = del_interval_update_time_us / 1000;
                     double ups = (interval_ms > 0) ? (static_cast<double>(deletes_since_report) / interval_ms * 1000.0) : 0;
                   const long global_update_idx = edgecount + deleted_updates;
                   std::cout << "[speed][static-delete] update " << global_update_idx << "/" << static_total_updates
@@ -1155,7 +1300,8 @@ int main(int argc, char** argv) {
               #if IS_HYBRID
                 system.force_sync();
               #endif
-                del_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - del_timer).count();
+                del_phase_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::high_resolution_clock::now() - delete_phase_timer).count();
             }
 
               // End-of-stream memory snapshot (after inserts + optional deletes).
@@ -1175,11 +1321,11 @@ int main(int argc, char** argv) {
           #endif
 
             if (cfg.output_path.empty()) {
-              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
             } else {
                 std::ofstream out(cfg.output_path);
-              write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
-              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, q_ins_time_us, del_time_us, effective_num_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+              write_static_speed_tsv(out, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
+              write_static_speed_report(std::cout, cfg, config_name, num_nodes, edgecount, ins_time_us, ins_phase_time_us, post_queries, del_time_us, del_phase_time_us, interleaved_queries, actual_batch_size, hf, actual_num_tiers, overall_max_link_tier, se, dse, sv);
             }
         }
 

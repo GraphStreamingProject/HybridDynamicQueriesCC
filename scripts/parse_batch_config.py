@@ -5,7 +5,9 @@ Modes:
 - --has-np <path>: print 1 if any config entry has key 'np', else 0
 - --emit-specs <path>: print pipe-delimited spec rows in this order:
   algo, cutset, sketch, hybrid, hybrid_threshold, hybrid_threshold_multiplier,
-    batch_size, num_tiers, speed_interval
+        batch_size, num_tiers, speed_interval, correctness_repeats,
+        correctness_check_interval, post_queries_per_update,
+        interleaved_queries_per_update
 """
 
 from __future__ import annotations
@@ -69,7 +71,10 @@ def main() -> int:
         batch_size = _as_str(cfg, "batch_size")
         num_tiers = _as_str(cfg, "num_tiers")
         speed_interval = _as_str(cfg, "speed_interval")
-
+        correctness_repeats = _as_str(cfg, "correctness_repeats")
+        correctness_check_interval = _as_str(cfg, "correctness_check_interval")
+        post_query_rate = _as_str(cfg, "post_queries_per_update")
+        interleaved_query_rate = _as_str(cfg, "interleaved_queries_per_update")
         print("|".join([
             algo,
             cutset,
@@ -80,6 +85,10 @@ def main() -> int:
             batch_size,
             num_tiers,
             speed_interval,
+            correctness_repeats,
+            correctness_check_interval,
+            post_query_rate,
+            interleaved_query_rate,
         ]))
 
     return 0
