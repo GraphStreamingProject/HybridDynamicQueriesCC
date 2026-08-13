@@ -36,7 +36,8 @@ SPEED_METRIC_FIELDS = [
     "num_queries", "query_time_ms", "update_time_ms", "queries_per_sec",
     "average_query_latency_us", "run_updates_per_sec_mean",
     "run_updates_per_sec_stddev", "sketched_edges", "direct_sketch_inserts",
-    "sketched_vertices",
+    "sketched_vertices", "num_stream_operations", "end_to_end_time_ms",
+    "operations_per_sec",
 ]
 
 CONFIG_FIELDS = [
@@ -390,6 +391,8 @@ def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
         update_ms = sum(number(row, "update_time_ms") for row in rows)
         queries = sum(number(row, "num_queries") for row in rows)
         query_ms = sum(number(row, "query_time_ms") for row in rows)
+        stream_operations = sum(number(row, "total_ops") for row in rows)
+        end_to_end_ms = sum(number(row, "end_to_end_time_ms") for row in rows)
         output.update({
             "updates_per_sec": ratio_per_second(updates, update_ms),
             "insert_updates_per_sec": NAN,
@@ -399,6 +402,9 @@ def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
             "query_time_ms": query_ms,
             "queries_per_sec": ratio_per_second(queries, query_ms),
             "average_query_latency_us": query_ms * 1000.0 / queries if queries else 0.0,
+            "num_stream_operations": integer_text(stream_operations),
+            "end_to_end_time_ms": end_to_end_ms,
+            "operations_per_sec": ratio_per_second(stream_operations, end_to_end_ms),
         })
         run_rates = [number(row, "updates_per_sec") for row in rows]
 
