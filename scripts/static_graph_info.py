@@ -7,6 +7,7 @@ Supports both binary symmetric CSR and Parlay text graph formats
 Usage:
     python3 scripts/static_graph_info.py graph1.bin graph2.adj ...
     python3 scripts/static_graph_info.py --output datasets.csv graph1.bin graph2.adj ...
+    python3 scripts/static_graph_info.py --keep-input-paths --output datasets.csv graph1.bin ...
 
 The CSV matches the format expected by --dataset-config in batch_speed.sh:
     dataset_name,filepath,num_vertices,num_edges
@@ -96,10 +97,15 @@ def main():
         "-o", "--output", default=None,
         help="Write dataset CSV to this path (default: stdout only)"
     )
+    parser.add_argument(
+        "--keep-input-paths", action="store_true",
+        help="Preserve input path spelling instead of canonicalizing paths in output",
+    )
     args = parser.parse_args()
 
     rows = []
-    for path in args.graphs:
+    for input_path in args.graphs:
+        path = input_path if args.keep_input_paths else os.path.realpath(input_path)
         if not os.path.isfile(path):
             print(f"Warning: {path} not found, skipping", file=sys.stderr)
             continue
