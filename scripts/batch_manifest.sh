@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared exact-path manifest helpers for batch_speed.sh and batch_profile.sh.
+# Shared manifest helpers for batch_speed.sh and batch_profile.sh.
 
 batch_manifest_init() {
     BATCH_INVOCATION_ID="$(date +%Y%m%d_%H%M%S)_$$"
@@ -23,16 +23,36 @@ batch_manifest_append() {
     local manifest_path="$1"
     shift
     batch_manifest_ensure "$manifest_path"
+    local manifest_dir
+    manifest_dir="$(realpath -m "$(dirname "$manifest_path")")"
+    local values=("$@")
+    local index
+    # Path fields begin with stream_path in the manifest schema.
+    for ((index = 26; index < ${#values[@]}; ++index)); do
+        if [[ -n "${values[$index]}" && "${values[$index]}" = /* ]]; then
+            values[$index]="$(realpath -m --relative-to="$manifest_dir" "${values[$index]}")"
+        fi
+    done
     {
         printf '%s' "$BATCH_INVOCATION_ID"
         local value
-        for value in "$@"; do
+        for value in "${values[@]}"; do
             value="${value//$'\t'/ }"
             value="${value//$'\n'/ }"
             printf '\t%s' "$value"
         done
         printf '\n'
     } >> "$manifest_path"
+}
+
+batch_manifest_try_reuse() {
+    local manifest_path="$1"
+    shift
+    batch_manifest_ensure "$manifest_path"
+    python3 "${SCRIPT_DIR}/reuse_batch_run.py" \
+        --manifest "$manifest_path" \
+        --invocation-id "$BATCH_INVOCATION_ID" \
+        "$@"
 }
 
 batch_manifest_summarize_local() {

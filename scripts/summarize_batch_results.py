@@ -52,10 +52,26 @@ CF_SENTINEL_CONFIG_FIELDS = [
     "recovery_size", "move_to_sketch",
 ]
 
+MANIFEST_PATH_FIELDS = [
+    "stream_path", "result_path", "intervals_path", "static_snapshot_path",
+    "space_path", "space_summary_path", "hybrid_summary_path",
+    "benchmark_summary_path", "status_path", "stdout_path", "stderr_path",
+]
+
 
 def read_tsv(path: str) -> list[dict[str, str]]:
     with open(path, "r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def resolve_manifest_paths(rows: list[dict[str, str]], manifest_path: str) -> None:
+    """Make manifest artifact paths absolute relative to their manifest file."""
+    manifest_dir = Path(manifest_path).resolve().parent
+    for row in rows:
+        for field in MANIFEST_PATH_FIELDS:
+            path = row.get(field, "")
+            if path and not os.path.isabs(path):
+                row[field] = str(manifest_dir / path)
 
 
 def number(row: dict[str, str], key: str, default: float = 0.0) -> float:
@@ -208,20 +224,23 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
             continue
         if run_outcome(manifest, True)[0] != "NORMAL":
             continue
-        completed_manifests.add(manifest_index)
         current_run_totals: list[float] = []
-        for snapshot in rows:
+        for raw_snapshot in rows:
+            snapshot = dict(raw_snapshot)
+            if "total_sketching_system_space_bytes" not in snapshot:
+                continue
+            sketch_system_bytes = number(snapshot, "total_sketching_system_space_bytes")
             if "total_cf_bytes" in snapshot:
-                total = sum(number(snapshot, key) for key in (
+                total = sketch_system_bytes + sum(number(snapshot, key) for key in (
                     "total_cf_bytes", "total_driver_bytes", "total_recovery_bytes",
-                    "total_sketch_bytes",
                 ))
             else:
-                total = sum(number(snapshot, key) for key in (
-                    "total_space_bytes", "query_tree_bytes", "top_level_lct_bytes",
-                ))
+                total = sketch_system_bytes
             candidates.append((total, snapshot, manifest))
             current_run_totals.append(total)
+        if not current_run_totals:
+            continue
+        completed_manifests.add(manifest_index)
         run_peaks.append(max(current_run_totals))
 
         benchmark_summary = manifest.get("benchmark_summary_path", "")
@@ -274,7 +293,10 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
         peak_cf_bytes = peak.get("total_cf_bytes", "")
         peak_driver_bytes = peak.get("total_driver_bytes", "")
         peak_recovery_bytes = peak.get("total_recovery_bytes", "")
-        peak_sketch_bytes = peak.get("total_sketch_bytes", peak.get("total_space_bytes", ""))
+        peak_sketch_bytes = peak.get(
+            "total_sketching_system_space_bytes",
+            "",
+        )
         peak_total_edges = peak.get("total_edges", "")
         peak_num_sketched_vertices = peak.get("num_sketched_vertices", "")
         peak_num_sketch_insertions = peak.get("num_sketch_insertions", "")
@@ -409,6 +431,7 @@ def main() -> int:
     args = parser.parse_args()
 
     manifests = read_tsv(args.manifest)
+    resolve_manifest_paths(manifests, args.manifest)
     if not manifests:
         print(f"Error: manifest is empty: {args.manifest}", file=sys.stderr)
         return 2

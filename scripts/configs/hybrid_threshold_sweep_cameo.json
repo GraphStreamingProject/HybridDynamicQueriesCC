@@ -15,7 +15,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": false,
       "batch_size": 10000,
       "num_tiers": "derived",
@@ -27,7 +27,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 5,
@@ -40,7 +40,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 10,
@@ -53,7 +53,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 15,
@@ -66,7 +66,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 20,
@@ -79,7 +79,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 25,
@@ -92,7 +92,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 30,
@@ -105,7 +105,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 50,
@@ -118,7 +118,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 100,
@@ -131,7 +131,7 @@
     {
       "algo": "mpi_batch",
       "cutset": "lct",
-      "sketch": "resizeable",
+      "sketch": "fixed",
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 200,

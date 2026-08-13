@@ -18,6 +18,20 @@ struct SpaceReport {
   size_t top_level_lct_bytes = 0;  // LinkCutTree (connectivity tracking)
 };
 
+inline size_t total_tier_tree_space_bytes(const SpaceReport& report) {
+    size_t total = 0;
+    for (const auto& tier_report : report.tier_reports) {
+        total += tier_report.space_bytes;
+    }
+    return total;
+}
+
+inline size_t total_sketching_system_space_bytes(const SpaceReport& report) {
+    return total_tier_tree_space_bytes(report)
+        + report.query_tree_bytes
+        + report.top_level_lct_bytes;
+}
+
 /**
  * Compute the maximal tier; the first such that every tier above it has the same number of components as it does. 
  * If no such tier exists, returns -1.
@@ -83,13 +97,14 @@ inline void write_space_report_tsv(const SpaceReport& report, const std::string&
     std::string summary_path = file_path.substr(0, file_path.rfind('.')) + "_summary.tsv";
     std::ofstream summary(summary_path, append ? std::ios_base::app : std::ios_base::out);
     if (!append) {
-        summary << "update_idx\ttotal_space_bytes\tquery_tree_bytes\ttop_level_lct_bytes\tmaximal_tier" << std::endl;
+        summary << "update_idx\ttotal_space_bytes\tquery_tree_bytes\ttop_level_lct_bytes\ttotal_sketching_system_space_bytes\tmaximal_tier" << std::endl;
     }
-    size_t total = 0;
-    for (const auto& r : report.tier_reports) {
-        total += r.space_bytes;
-    }
-    summary << update_idx << "\t" << total << "\t" << report.query_tree_bytes << "\t" << report.top_level_lct_bytes << "\t" << compute_first_maximal_tier(report.tier_reports) << std::endl;
+    summary << update_idx << "\t"
+            << total_tier_tree_space_bytes(report) << "\t"
+            << report.query_tree_bytes << "\t"
+            << report.top_level_lct_bytes << "\t"
+            << total_sketching_system_space_bytes(report) << "\t"
+            << compute_first_maximal_tier(report.tier_reports) << std::endl;
 }
 
 inline void write_space_report_tsv(const HybridSpaceReport& hybrid_report, const std::string& file_path, bool append = true, long update_idx = -1) {
@@ -100,17 +115,17 @@ inline void write_space_report_tsv(const HybridSpaceReport& hybrid_report, const
     std::string summary_path = file_path.substr(0, file_path.rfind('.')) + "_hybrid_summary.tsv";
     std::ofstream summary(summary_path, append ? std::ios_base::app : std::ios_base::out);
     if (!append) {
-        summary << "update_idx\ttotal_cf_bytes\ttotal_driver_bytes\ttotal_recovery_bytes\ttotal_sketch_bytes\tmaximal_tier\ttotal_edges\tnum_sketched_vertices\tnum_sketch_insertions\tnum_sketch_deletions\tnum_sketched_edges\tnum_direct_sketch_inserts" << std::endl;
+        summary << "update_idx\ttotal_cf_bytes\ttotal_driver_bytes\ttotal_recovery_bytes\ttotal_sketch_bytes\tquery_tree_bytes\ttop_level_lct_bytes\ttotal_sketching_system_space_bytes\tmaximal_tier\ttotal_edges\tnum_sketched_vertices\tnum_sketch_insertions\tnum_sketch_deletions\tnum_sketched_edges\tnum_direct_sketch_inserts" << std::endl;
     }
-    size_t total_sketch_bytes = 0;
-    for (const auto& r : hybrid_report.sketch_forest_report.tier_reports) {
-        total_sketch_bytes += r.space_bytes;
-    }
+    const size_t total_sketch_bytes = total_tier_tree_space_bytes(hybrid_report.sketch_forest_report);
     summary << update_idx << "\t"
             << hybrid_report.cf_space_bytes << "\t"
             << hybrid_report.driver_space_bytes << "\t"
             << hybrid_report.recovery_sketch_space_bytes << "\t"
             << total_sketch_bytes << "\t"
+            << hybrid_report.sketch_forest_report.query_tree_bytes << "\t"
+            << hybrid_report.sketch_forest_report.top_level_lct_bytes << "\t"
+            << total_sketching_system_space_bytes(hybrid_report.sketch_forest_report) << "\t"
             << compute_first_maximal_tier(hybrid_report.sketch_forest_report.tier_reports) << "\t"
             << hybrid_report.total_num_edges << "\t"
             << hybrid_report.num_sketched_vertices << "\t"

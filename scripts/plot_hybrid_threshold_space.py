@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot peak space components across hybrid thresholds and a Cluster Forest baseline."""
+"""Plot standalone and hybrid peak space components against Cluster Forest."""
 
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ COMPONENTS = (
     ("peak_recovery_bytes", "Recovery"),
     ("peak_driver_bytes", "Manager"),
 )
+
+CUPCAKE_OUTLIER_RATIO = 2.0
+PLOT_HEADROOM = 1.2
 
 
 def parse_nonnegative(row: dict[str, str], field: str) -> float:
@@ -57,7 +60,7 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 
 def select_plot_rows(
     rows: list[dict[str, str]],
-) -> tuple[dict[str, str], list[dict[str, str]], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str] | None, list[dict[str, str]], dict[str, str]]:
     normal = [row for row in rows if row.get("outcome", "NORMAL") == "NORMAL"]
     cf_rows = [row for row in normal if row.get("algo", "") == "cf"]
     if len(cf_rows) != 1:
@@ -73,6 +76,18 @@ def select_plot_rows(
     if len(cupcake_rows) != 1:
         raise ValueError(f"expected exactly one NORMAL CUPCaKE row, found {len(cupcake_rows)}")
 
+    balloon_only_rows = [
+        row for row in normal
+        if row.get("algo", "") == "mpi_batch"
+        and row.get("cutset", "") == "lct"
+        and row.get("hybrid", "").lower() == "false"
+    ]
+    if len(balloon_only_rows) > 1:
+        raise ValueError(
+            "expected at most one NORMAL standalone BalloonDC row "
+            f"(mpi_batch/lct/non-hybrid), found {len(balloon_only_rows)}"
+        )
+
     hybrid_rows: list[dict[str, str]] = []
     for row in normal:
         if row.get("algo", "") == "cf" or row.get("hybrid", "").lower() != "true":
@@ -86,7 +101,8 @@ def select_plot_rows(
     if not hybrid_rows:
         raise ValueError("no NORMAL hybrid threshold rows were found")
     hybrid_rows.sort(key=lambda row: float(row["hybrid_threshold_multiplier"]))
-    return cupcake_rows[0], hybrid_rows, cf_rows[0]
+    balloon_only_row = balloon_only_rows[0] if balloon_only_rows else None
+    return cupcake_rows[0], balloon_only_row, hybrid_rows, cf_rows[0]
 
 
 def dataset_label(rows: list[dict[str, str]], override: str | None) -> str:
@@ -102,8 +118,9 @@ def dataset_label(rows: list[dict[str, str]], override: str | None) -> str:
 
 def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
     rows = read_rows(summary_path)
-    cupcake_row, hybrid_rows, cf_row = select_plot_rows(rows)
-    plot_rows = [cupcake_row, *hybrid_rows, cf_row]
+    cupcake_row, balloon_only_row, hybrid_rows, cf_row = select_plot_rows(rows)
+    standalone_rows = [balloon_only_row] if balloon_only_row is not None else []
+    plot_rows = [cupcake_row, *standalone_rows, *hybrid_rows, cf_row]
 
     baseline_components = [parse_nonnegative(cf_row, field) for field, _ in COMPONENTS]
     baseline = sum(baseline_components)
@@ -114,7 +131,10 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
         [parse_nonnegative(row, field) / baseline for field, _ in COMPONENTS]
         for row in plot_rows
     ]
-    labels = [r"\textsc{CUPCaKE}"] + [
+    labels = [r"\textsc{CUPCaKE}"]
+    if balloon_only_row is not None:
+        labels.append(r"\textsc{BalloonDC}" + "\nOnly")
+    labels += [
         rf"${float(row['hybrid_threshold_multiplier']):g}\times$" for row in hybrid_rows
     ] + ["Cluster Forest\nOnly"]
 
@@ -148,16 +168,36 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
         )
         bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
 
+    other_max = max(bottoms[1:])
+    cupcake_is_clipped = cupcake_total > CUPCAKE_OUTLIER_RATIO * other_max
+    plot_ceiling = PLOT_HEADROOM * (other_max if cupcake_is_clipped else max(bottoms))
+    ax.set_ylim(0, plot_ceiling)
+
     for index, total in enumerate(bottoms):
+        label_height = min(total, 0.94 * plot_ceiling)
         ax.annotate(
             rf"${total:.2f}\times$",
-            (index, total),
+            (index, label_height),
             xytext=(0, 5),
             textcoords="offset points",
             ha="center",
             va="bottom",
             fontweight="bold",
         )
+
+    if cupcake_is_clipped:
+        break_height = 0.87 * plot_ceiling
+        break_half_width = 0.18
+        break_rise = 0.035 * plot_ceiling
+        for offset in (-0.055, 0.055):
+            ax.plot(
+                [-break_half_width + offset, break_half_width + offset],
+                [break_height - break_rise, break_height + break_rise],
+                color="white",
+                linewidth=3.0,
+                solid_capstyle="butt",
+                zorder=4,
+            )
 
     ax.set_xticks(x_positions, labels)
     ax.set_xlabel("System / hybrid threshold multiplier")

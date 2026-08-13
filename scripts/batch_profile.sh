@@ -31,6 +31,7 @@ PROFILE_INTERVAL="${PROFILE_INTERVAL:-1000000}"
 DATASET_CONFIG=""
 DATASET_BASE_DIR=""
 BATCH_CONFIG_JSON=""
+REUSE_OLD_RUNS=false
 THRESHOLD_FACTOR="${THRESHOLD_FACTOR:-25}"
 NP_SET=false
 SLURM_MODE=false
@@ -64,6 +65,7 @@ Options:
     --dataset-config FILE TSV/CSV with columns: dataset_name,filepath,num_vertices,num_edges
     --dataset-base-dir DIR Resolve relative dataset paths from --dataset-config against DIR
     --batch-config FILE   JSON config for run matrix (algo/cutset/sketch/hybrid/threshold/num_tiers)
+    --reuse-old-runs      Reuse matching completed runs from older manifests when available
     --threshold-factor N  Default hybrid multiplier (threshold = N * num_tiers, default: 25)
     --hybrid-threshold-multiplier N  Alias for --threshold-factor
     --slurm               Submit each config as a separate SLURM job
@@ -125,6 +127,10 @@ while [[ $# -gt 0 ]]; do
         --batch-config|--config-json)
             BATCH_CONFIG_JSON="$2"
             shift 2
+            ;;
+        --reuse-old-runs)
+            REUSE_OLD_RUNS=true
+            shift
             ;;
         --threshold-factor)
             THRESHOLD_FACTOR="$2"
@@ -488,7 +494,7 @@ register_config() {
     fi
     local manifest_path
     manifest_path="$(batch_manifest_path_for_dataset)"
-    batch_manifest_append "$manifest_path" \
+    local manifest_values=(
         "$CURRENT_STREAM_NAME" "$CURRENT_DATASET_NODES" "$CURRENT_DATASET_EDGES" \
         "$BENCH_TYPE" "${run:-1}" "$run_suffix" "$cfg_name" \
         "$algo" "$cutset" "$sketch" "$hybrid" "$threshold" "$threshold_multiplier" \
@@ -498,6 +504,15 @@ register_config() {
         "$CURRENT_STREAM_FILE" "" "" "" "$space_path" \
         "${space_path%.tsv}_summary.tsv" "${space_path%.tsv}_hybrid_summary.tsv" \
         "${run_dir}/${stream_basename}_summary.tsv" "$status_path" "$stdout_path" "$stderr_path"
+    )
+    if $REUSE_OLD_RUNS; then
+        local reused_from
+        if reused_from=$(batch_manifest_try_reuse "$manifest_path" "${manifest_values[@]}"); then
+            echo "Reusing ${cfg_name} run from ${reused_from}"
+            return
+        fi
+    fi
+    batch_manifest_append "$manifest_path" "${manifest_values[@]}"
     local mpi_args=()
     if [[ -n "$MPI_FLAGS" ]]; then
         mpi_args+=(--mpi-flags "$MPI_FLAGS")
@@ -714,15 +729,12 @@ process_stream() {
                 register_config "${args[@]}"
             done
         else
-            for multiplier in 15 20 25 30 50 100 200; do
-                local threshold
-                threshold="$((multiplier * active_num_tiers))"
-                local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
-                    --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
-                    --hybrid --hybrid-threshold "$threshold" --auto-build)
-                [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
-                register_config "${hybrid_args[@]}"
-            done
+            local threshold="$((THRESHOLD_FACTOR * active_num_tiers))"
+            local hybrid_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
+                --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
+                --hybrid --hybrid-threshold "$threshold" --auto-build)
+            [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
+            register_config "${hybrid_args[@]}"
 
             local pure_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                 --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
@@ -750,6 +762,7 @@ fi
 if $SLURM_MODE; then
     if [[ $SLURM_TASK_COUNT -eq 0 ]]; then
         echo "No tasks to submit."
+        batch_manifest_summarize_local
         exit 0
     fi
 
