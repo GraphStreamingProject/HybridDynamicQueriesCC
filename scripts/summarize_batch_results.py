@@ -332,6 +332,27 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
     return output
 
 
+def add_static_speed_peak_fields(output: dict[str, Any], group: list[dict[str, str]]) -> None:
+    """Populate profile-style peak fields from static speed phase snapshots."""
+    snapshot_group: list[dict[str, str]] = []
+    for manifest in group:
+        snapshot_path = manifest.get("static_snapshot_path", "")
+        if not snapshot_path:
+            continue
+        stem, _ = os.path.splitext(snapshot_path)
+        snapshot_manifest = dict(manifest)
+        snapshot_manifest["space_summary_path"] = f"{stem}_summary.tsv"
+        snapshot_manifest["hybrid_summary_path"] = f"{stem}_hybrid_summary.tsv"
+        snapshot_group.append(snapshot_manifest)
+
+    if snapshot_group:
+        snapshot_summary = summarize_profile(snapshot_group)
+        for field in PROFILE_METRIC_FIELDS + PROFILE_TEXT_FIELDS:
+            output[field] = snapshot_summary.get(field, NAN)
+    else:
+        add_profile_defaults(output)
+
+
 def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
     output: dict[str, Any] = config_columns(group[0])
     output["hybrid_threshold_multiplier"] = infer_multiplier(group[0])
@@ -405,6 +426,10 @@ def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
     for key in ("sketched_edges", "direct_sketch_inserts", "sketched_vertices"):
         if key in rows[0]:
             output[key] = statistics.fmean(number(row, key) for row in rows)
+    if is_static:
+        add_static_speed_peak_fields(output, group)
+    else:
+        add_profile_defaults(output)
     add_nan_defaults(output, SPEED_METRIC_FIELDS)
     return output
 
