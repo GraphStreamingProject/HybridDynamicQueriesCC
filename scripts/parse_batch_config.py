@@ -7,7 +7,7 @@ Modes:
   algo, cutset, sketch, hybrid, hybrid_threshold, hybrid_threshold_multiplier,
         batch_size, num_tiers, speed_interval, correctness_repeats,
         correctness_check_interval, post_queries_per_update,
-        interleaved_queries_per_update, profile_interval
+        interleaved_queries_per_update, profile_interval, post_num_queries
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ def main() -> int:
         post_query_rate = _as_str(cfg, "post_queries_per_update")
         interleaved_query_rate = _as_str(cfg, "interleaved_queries_per_update")
         profile_interval = _as_str(cfg, "profile_interval")
+        post_num_queries = _as_str(cfg, "post_num_queries")
         print("|".join([
             algo,
             cutset,
@@ -91,6 +92,7 @@ def main() -> int:
             post_query_rate,
             interleaved_query_rate,
             profile_interval,
+            post_num_queries,
         ]))
 
     return 0

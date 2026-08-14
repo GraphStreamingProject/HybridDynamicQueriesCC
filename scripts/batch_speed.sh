@@ -671,7 +671,7 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
                     if [[ "$BENCH_TYPE" == "correctness" ]]; then
                         echo "Error: correctness benchmarks do not support the cf configuration."
@@ -687,6 +687,7 @@ process_stream() {
                     fi
                     [[ -n "$cfg_post_queries_per_update" ]] && cf_args+=(--post-queries-per-update "$cfg_post_queries_per_update")
                     [[ -n "$cfg_interleaved_queries_per_update" ]] && cf_args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")
+                    [[ -n "$cfg_post_num_queries" ]] && cf_args+=(--num-queries "$cfg_post_num_queries")
                     register_config "${cf_args[@]}"
                     continue
                 fi
@@ -790,6 +791,9 @@ process_stream() {
                 fi
                 if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_post_queries_per_update" ]]; then
                     args+=(--post-queries-per-update "$cfg_post_queries_per_update")
+                fi
+                if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_post_num_queries" ]]; then
+                    args+=(--num-queries "$cfg_post_num_queries")
                 fi
                 if [[ "$BENCH_TYPE" == "speed" && -n "$cfg_interleaved_queries_per_update" ]]; then
                     args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")

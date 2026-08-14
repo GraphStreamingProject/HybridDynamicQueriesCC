@@ -615,7 +615,7 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
                     local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
                     if [[ -n "$cfg_profile_interval" ]]; then

@@ -13,13 +13,6 @@
       "profile_interval": 1000000,
       "post_queries_per_update": 0,
       "interleaved_queries_per_update": 1
-    },
-    {
-      "algo": "cf",
-      "speed_interval": 1000000,
-      "profile_interval": 1000000,
-      "post_queries_per_update": 0,
-      "interleaved_queries_per_update": 10
     }
   ]
 }
