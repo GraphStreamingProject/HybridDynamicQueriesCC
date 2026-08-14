@@ -29,12 +29,9 @@ PROFILE_TEXT_FIELDS = ["source_run", "peak_phase"]
 
 SPEED_METRIC_FIELDS = [
     "num_nodes", "max_link_tier", "updates_per_sec", "insert_updates_per_sec",
-    "insert_update_calls_per_sec", "delete_updates_per_sec",
-    "delete_update_calls_per_sec", "insert_update_calls_ms", "insert_phase_wall_ms",
-    "delete_update_calls_ms", "delete_phase_wall_ms", "num_post_queries",
-    "post_queries_ms", "num_interleaved_queries", "interleaved_queries_ms",
-    "num_queries", "query_time_ms", "update_time_ms", "queries_per_sec",
-    "average_query_latency_us", "run_updates_per_sec_mean",
+    "delete_updates_per_sec", "insert_phase_wall_ms", "delete_phase_wall_ms", "num_post_queries",
+    "post_queries_ms", "post_queries_per_sec", "num_interleaved_queries",
+    "num_queries", "run_updates_per_sec_mean",
     "run_updates_per_sec_stddev", "sketched_edges", "direct_sketch_inserts",
     "sketched_vertices", "num_stream_operations", "end_to_end_time_ms",
     "operations_per_sec",
@@ -360,58 +357,48 @@ def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
     output["max_link_tier"] = integer_text(max(number(row, "max_link_tier", -1) for row in rows))
 
     if is_static:
+        has_post_query_timing = "post_queries_ms" in rows[0]
         insert_updates = sum(number(row, "edges") for row in rows)
-        insert_call_ms = sum(number(row, "insert_update_calls_ms") for row in rows)
         insert_wall_ms = sum(number(row, "insert_phase_wall_ms") for row in rows)
         deletion_updates = sum(number(row, "edges") for row, manifest in completed
                                if manifest.get("do_deletions", "false") == "true")
-        delete_call_ms = sum(number(row, "delete_update_calls_ms") for row in rows)
         delete_wall_ms = sum(number(row, "delete_phase_wall_ms") for row in rows)
         post_queries = sum(number(row, "num_post_queries") for row in rows)
         post_query_ms = sum(number(row, "post_queries_ms") for row in rows)
         interleaved_queries = sum(number(row, "num_interleaved_queries") for row in rows)
-        interleaved_query_ms = sum(number(row, "interleaved_queries_ms") for row in rows)
-        all_queries = post_queries + interleaved_queries
-        all_query_ms = post_query_ms + interleaved_query_ms
         output.update({
             "updates_per_sec": ratio_per_second(insert_updates + deletion_updates, insert_wall_ms + delete_wall_ms),
             "insert_updates_per_sec": ratio_per_second(insert_updates, insert_wall_ms),
-            "insert_update_calls_per_sec": ratio_per_second(insert_updates, insert_call_ms),
             "delete_updates_per_sec": ratio_per_second(deletion_updates, delete_wall_ms),
-            "delete_update_calls_per_sec": ratio_per_second(deletion_updates, delete_call_ms),
-            "insert_update_calls_ms": insert_call_ms,
             "insert_phase_wall_ms": insert_wall_ms,
-            "delete_update_calls_ms": delete_call_ms,
             "delete_phase_wall_ms": delete_wall_ms,
             "num_post_queries": integer_text(post_queries),
-            "post_queries_ms": post_query_ms,
+            "post_queries_ms": post_query_ms if has_post_query_timing else NAN,
+            "post_queries_per_sec": ratio_per_second(post_queries, post_query_ms) if has_post_query_timing else NAN,
             "num_interleaved_queries": integer_text(interleaved_queries),
-            "interleaved_queries_ms": interleaved_query_ms,
-            "queries_per_sec": ratio_per_second(all_queries, all_query_ms),
-            "average_query_latency_us": all_query_ms * 1000.0 / all_queries if all_queries else 0.0,
         })
-        run_rates = [ratio_per_second(number(row, "edges"), number(row, "insert_phase_wall_ms")) for row in rows]
+        run_rates = [
+            ratio_per_second(
+                number(row, "edges") * (2 if manifest.get("do_deletions", "false") == "true" else 1),
+                number(row, "insert_phase_wall_ms") + number(row, "delete_phase_wall_ms"),
+            )
+            for row, manifest in completed
+        ]
     else:
         updates = sum(number(row, "num_updates") for row in rows)
-        update_ms = sum(number(row, "update_time_ms") for row in rows)
         queries = sum(number(row, "num_queries") for row in rows)
-        query_ms = sum(number(row, "query_time_ms") for row in rows)
         stream_operations = sum(number(row, "total_ops") for row in rows)
         end_to_end_ms = sum(number(row, "end_to_end_time_ms") for row in rows)
         output.update({
-            "updates_per_sec": ratio_per_second(updates, update_ms),
+            "updates_per_sec": ratio_per_second(updates, end_to_end_ms),
             "insert_updates_per_sec": NAN,
             "delete_updates_per_sec": NAN,
-            "update_time_ms": update_ms,
             "num_queries": integer_text(queries),
-            "query_time_ms": query_ms,
-            "queries_per_sec": ratio_per_second(queries, query_ms),
-            "average_query_latency_us": query_ms * 1000.0 / queries if queries else 0.0,
             "num_stream_operations": integer_text(stream_operations),
             "end_to_end_time_ms": end_to_end_ms,
             "operations_per_sec": ratio_per_second(stream_operations, end_to_end_ms),
         })
-        run_rates = [number(row, "updates_per_sec") for row in rows]
+        run_rates = [ratio_per_second(number(row, "num_updates"), number(row, "end_to_end_time_ms")) for row in rows]
 
     output["run_updates_per_sec_mean"] = statistics.fmean(run_rates)
     output["run_updates_per_sec_stddev"] = statistics.stdev(run_rates) if len(run_rates) > 1 else 0.0

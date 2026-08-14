@@ -72,7 +72,7 @@ def walltime_ms(row: dict[str, str]) -> float:
         return number(row, "end_to_end_time_ms")
     fields = (
         "insert_phase_wall_ms", "delete_phase_wall_ms",
-        "post_queries_ms", "interleaved_queries_ms",
+        "post_queries_ms",
     )
     return sum(number(row, field) for field in fields)
 
