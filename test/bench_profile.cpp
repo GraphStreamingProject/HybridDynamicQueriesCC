@@ -168,6 +168,8 @@ struct ProfileConfig {
     long profile_interval = 1000000;
     bool static_graph = false;
     bool do_deletions = false;
+    double post_queries_per_update = 0.0;
+    double interleaved_queries_per_update = 0.0;
     uint64_t stream_seed = 42;
 };
 
@@ -178,6 +180,7 @@ static ProfileConfig parse_args(int argc, char** argv) {
                   << " <stream_path> [--batch-size N] [--height-factor F] "
                   "[--num-tiers N] [--hybrid-threshold N] [--recovery-size N] [--move-to-sketch N] "
                      "[--output-dir dir] [--profile-interval N] "
+                     "[--post-queries-per-update C] [--interleaved-queries-per-update C] "
                      "[--static-graph] [--static] [--do-deletions] [--stream-seed N]"
                   << std::endl;
         exit(1);
@@ -194,6 +197,12 @@ static ProfileConfig parse_args(int argc, char** argv) {
         else if (arg == "--output-dir" && i + 1 < argc) cfg.output_dir = argv[++i];
         else if ((arg == "--profile-interval" || arg == "--report-interval") && i + 1 < argc) {
           cfg.profile_interval = std::atol(argv[++i]);
+        }
+        else if (arg == "--post-queries-per-update" && i + 1 < argc) {
+          cfg.post_queries_per_update = std::atof(argv[++i]);
+        }
+        else if (arg == "--interleaved-queries-per-update" && i + 1 < argc) {
+          cfg.interleaved_queries_per_update = std::atof(argv[++i]);
         }
         else if (arg == "--static-graph" || arg == "--static") cfg.static_graph = true;
         else if (arg == "--do-deletions") cfg.do_deletions = true;

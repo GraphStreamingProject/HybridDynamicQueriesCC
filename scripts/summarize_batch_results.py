@@ -16,7 +16,7 @@ from typing import Any, Iterable
 NAN = "nan"
 
 PROFILE_METRIC_FIELDS = [
-    "peak_update_idx", "peak_total_bytes",
+    "peak_update_idx", "peak_total_bytes", "profile_wall_time_ms",
     "run_peak_bytes_mean", "run_peak_bytes_stddev", "peak_cf_bytes",
     "peak_driver_bytes", "peak_recovery_bytes", "peak_sketch_bytes",
     "peak_query_tree_bytes", "peak_top_level_lct_bytes", "maximal_tier_at_peak",
@@ -212,6 +212,7 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
     completed_manifests: set[int] = set()
     candidates: list[tuple[float, dict[str, str], dict[str, str]]] = []
     run_peaks: list[float] = []
+    profile_wall_times: list[float] = []
     max_link_tiers: list[float] = []
 
     for manifest_index, manifest in enumerate(group):
@@ -248,6 +249,9 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
         if benchmark_summary and os.path.isfile(benchmark_summary):
             for summary_row in read_tsv(benchmark_summary):
                 max_link_tiers.append(number(summary_row, "max_link_tier", -1))
+                wall_time = number(summary_row, "wall_time_ms", -1)
+                if wall_time >= 0:
+                    profile_wall_times.append(wall_time)
 
     add_outcome_columns(output, group, completed_manifests)
     if not candidates:
@@ -309,6 +313,7 @@ def summarize_profile(group: list[dict[str, str]]) -> dict[str, Any]:
         "peak_update_idx": peak.get("update_idx", ""),
         "peak_phase": peak_phase,
         "peak_total_bytes": integer_text(peak_total),
+        "profile_wall_time_ms": statistics.fmean(profile_wall_times) if profile_wall_times else NAN,
         "run_peak_bytes_mean": statistics.fmean(run_peaks),
         "run_peak_bytes_stddev": statistics.stdev(run_peaks) if len(run_peaks) > 1 else 0.0,
         "peak_cf_bytes": peak_cf_bytes,

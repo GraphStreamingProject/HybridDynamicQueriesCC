@@ -29,6 +29,7 @@ COMPONENTS = (
 
 CUPCAKE_OUTLIER_RATIO = 2.0
 BALLOONDC_OUTLIER_RATIO = 2.0
+CLUSTER_FOREST_OUTLIER_RATIO = 2.0
 PLOT_HEADROOM = 1.2
 
 
@@ -107,6 +108,22 @@ def select_plot_rows(
     return cupcake_row, balloon_only_row, hybrid_rows, cf_rows[0]
 
 
+def cupcake_failure_label(rows: list[dict[str, str]]) -> str:
+    """Return the display label for an unavailable CUPCaKE configuration."""
+    cupcake_rows = [
+        row for row in rows
+        if row.get("algo", "") == "mpi"
+        and row.get("cutset", "") == "ett"
+        and row.get("sketch", "") == "fixed"
+        and row.get("hybrid", "").lower() == "false"
+    ]
+    detail = " ".join(
+        " ".join(row.get(field, "") for field in ("outcome", "failure_details"))
+        for row in cupcake_rows
+    ).upper()
+    return "OOM" if "OOM" in detail or "OUT_OF_MEMORY" in detail else "DNF"
+
+
 def dataset_label(rows: list[dict[str, str]], override: str | None) -> str:
     if override:
         return override
@@ -121,6 +138,7 @@ def dataset_label(rows: list[dict[str, str]], override: str | None) -> str:
 def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
     rows = read_rows(summary_path)
     cupcake_row, balloon_only_row, hybrid_rows, cf_row = select_plot_rows(rows)
+    cupcake_status = cupcake_failure_label(rows) if cupcake_row is None else ""
     standalone_rows = [balloon_only_row] if balloon_only_row is not None else []
     non_cupcake_rows = [*standalone_rows, *hybrid_rows, cf_row]
     plot_rows = ([cupcake_row] if cupcake_row is not None else []) + non_cupcake_rows
@@ -139,7 +157,7 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
         cupcake_total = sum(
             parse_nonnegative(cupcake_row, field) / baseline for field, _ in COMPONENTS
         )
-    labels = [r"\textsc{CUPCaKE}" if cupcake_row is not None else r"\textsc{CUPCaKE}" + "\n(\textsc{OOM})"]
+    labels = [r"\textsc{CUPCaKE}" if cupcake_row is not None else r"\textsc{CUPCaKE}" + f"\n(\textsc{{{cupcake_status}}})"]
     if balloon_only_row is not None:
         labels.append(r"\textsc{BalloonDC}" + "\nOnly")
     labels += [
@@ -181,6 +199,15 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
         total for index, total in enumerate(bottoms)
         if index != 0 and index != balloon_only_index
     ]
+    cf_index = len(bottoms) - 1
+    non_cf_totals = [total for index, total in enumerate(bottoms) if index != cf_index]
+    cf_total = bottoms[cf_index]
+    cf_is_clipped = cf_total > CLUSTER_FOREST_OUTLIER_RATIO * max(non_cf_totals)
+    if cf_is_clipped:
+        reference_totals = [
+            total for index, total in enumerate(bottoms)
+            if index not in {0, balloon_only_index, cf_index}
+        ]
     reference_max = max(reference_totals)
     cupcake_is_clipped = cupcake_row is not None and cupcake_total > CUPCAKE_OUTLIER_RATIO * reference_max
     balloon_only_total = bottoms[balloon_only_index] if balloon_only_index is not None else 0.0
@@ -188,19 +215,29 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
         balloon_only_index is not None
         and balloon_only_total > BALLOONDC_OUTLIER_RATIO * reference_max
     )
-    plot_ceiling = PLOT_HEADROOM * (
-        reference_max if cupcake_is_clipped or balloondc_is_clipped else max(bottoms)
-    )
+    if cupcake_is_clipped or balloondc_is_clipped:
+        ceiling_base = reference_max
+    elif cf_is_clipped:
+        ceiling_base = CLUSTER_FOREST_OUTLIER_RATIO * max(non_cf_totals)
+    else:
+        ceiling_base = max(bottoms)
+    plot_ceiling = PLOT_HEADROOM * ceiling_base
     ax.set_ylim(0, plot_ceiling)
+
+    if cupcake_row is None:
+        ax.bar(
+            [x_positions[0]], [plot_ceiling], width=0.72,
+            color=cupcake_color, label=r"\textsc{CUPCaKE}",
+        )
 
     for index, total in enumerate(bottoms):
         if index == 0 and cupcake_row is None:
             ax.annotate(
-                r"\textsc{OOM}",
-                (index, 0.04 * plot_ceiling),
+                rf"\textsc{{{cupcake_status}}}",
+                (index, 0.94 * plot_ceiling),
                 ha="center",
                 va="bottom",
-                color=cupcake_color,
+                color="white",
                 fontweight="bold",
             )
             continue
@@ -215,7 +252,14 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
             fontweight="bold",
         )
 
-    for index, is_clipped in enumerate((cupcake_is_clipped, balloondc_is_clipped)):
+    clipped_bars = (
+        (0, cupcake_is_clipped),
+        (balloon_only_index, balloondc_is_clipped),
+        (cf_index, cf_is_clipped),
+    )
+    for index, is_clipped in clipped_bars:
+        if index is None:
+            continue
         if not is_clipped:
             continue
         break_height = 0.87 * plot_ceiling

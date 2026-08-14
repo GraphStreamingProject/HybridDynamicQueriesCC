@@ -625,6 +625,8 @@ process_stream() {
                             echo "Warning: ignoring non-numeric profile_interval '$cfg_profile_interval' in config '$spec'"
                         fi
                     fi
+                    [[ -n "$cfg_post_queries_per_update" ]] && cf_args+=(--post-queries-per-update "$cfg_post_queries_per_update")
+                    [[ -n "$cfg_interleaved_queries_per_update" ]] && cf_args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")
                     register_config "${cf_args[@]}"
                     continue
                 fi
@@ -721,6 +723,8 @@ process_stream() {
                     args+=(--hybrid)
                     [[ -n "$threshold_to_use" ]] && args+=(--hybrid-threshold "$threshold_to_use")
                 fi
+                [[ -n "$cfg_post_queries_per_update" ]] && args+=(--post-queries-per-update "$cfg_post_queries_per_update")
+                [[ -n "$cfg_interleaved_queries_per_update" ]] && args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")
                 if [[ "$cfg_hybrid" == "true" ]]; then
                     echo "Resolved config params: algo=${cfg_algo}, cutset=${cfg_cutset}, sketch=${cfg_sketch}, num_tiers=${tiers_for_np}, np=${config_np}, num_tiers_spec='${cfg_num_tiers:-<implicit>}' (${tier_resolution_desc}), hybrid_threshold=${threshold_to_use}"
                 else
