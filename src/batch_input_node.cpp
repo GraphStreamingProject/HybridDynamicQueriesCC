@@ -299,6 +299,20 @@ void BatchInputNode::process_all_updates() {
     process_updates();
 }
 
+#ifdef CORRECTNESS_DIAGNOSTICS
+TierMaximalityCheck BatchInputNode::take_tier_maximality_check() {
+  process_all_updates();
+  control_message = {};
+  control_message.status = BATCH_UPDATE_CORRECTNESS_DIAGNOSTIC;
+  bcast(&control_message, sizeof(BatchControlMessage), INPUT_NODE_RANK);
+
+  TierMaximalityCheck result;
+  MPI_Recv(&result, sizeof(TierMaximalityCheck), MPI_BYTE, num_tiers,
+           0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  return result;
+}
+#endif
+
 bool BatchInputNode::connectivity_query(node_id_t a, node_id_t b) {
   process_all_updates();
   return query_forest.is_connected(a, b);

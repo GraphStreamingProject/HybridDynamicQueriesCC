@@ -24,6 +24,7 @@ DO_DELETIONS=false
 BATCH_SIZE=""
 HEIGHT_FACTOR=""
 NUM_TIERS=""
+MIN_NUM_TIERS=""
 RECOVERY_SIZE=""
 MOVE_TO_SKETCH=""
 STREAM_SEED=""
@@ -77,6 +78,7 @@ Options:
     --batch-size N        Forward batch size to bench_profile
     --height-factor F     Forward height factor to bench_profile
     --num-tiers N         Forward num tiers to bench_profile
+    --min-num-tiers N     Floor the resolved num tiers (per-config value takes precedence)
     --recovery-size N     Forward recovery sketch size to bench_profile
     --move-to-sketch N    Forward move-to-sketch threshold to bench_profile
     --stream-seed N       Reproducible static graph ordering seed (default: 42)
@@ -178,6 +180,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --num-tiers)
             NUM_TIERS="$2"
+            shift 2
+            ;;
+        --min-num-tiers)
+            MIN_NUM_TIERS="$2"
             shift 2
             ;;
         --recovery-size)
@@ -447,6 +453,7 @@ register_config() {
     local manifest_batch_size="$BATCH_SIZE"
     local manifest_height_factor="$HEIGHT_FACTOR"
     local manifest_num_tiers=""
+    local manifest_min_num_tiers=""
     local manifest_np=""
     local manifest_profile_interval="$PROFILE_INTERVAL"
 
@@ -460,6 +467,7 @@ register_config() {
             --hybrid-threshold) threshold="${config_args[$((i+1))]}"; i=$((i+2));;
             --batch-size) manifest_batch_size="${config_args[$((i+1))]}"; i=$((i+2));;
             --num-tiers) manifest_num_tiers="${config_args[$((i+1))]}"; i=$((i+2));;
+            --min-num-tiers) manifest_min_num_tiers="${config_args[$((i+1))]}"; i=$((i+2));;
             --np) manifest_np="${config_args[$((i+1))]}"; i=$((i+2));;
             --profile-interval|--report-interval) manifest_profile_interval="${config_args[$((i+1))]}"; i=$((i+2));;
             *) i=$((i+1));;
@@ -498,7 +506,7 @@ register_config() {
         "$CURRENT_STREAM_NAME" "$CURRENT_DATASET_NODES" "$CURRENT_DATASET_EDGES" \
         "$BENCH_TYPE" "${run:-1}" "$run_suffix" "$cfg_name" \
         "$algo" "$cutset" "$sketch" "$hybrid" "$threshold" "$threshold_multiplier" \
-        "$manifest_batch_size" "$manifest_height_factor" "$manifest_num_tiers" "$manifest_np" \
+        "$manifest_batch_size" "$manifest_height_factor" "$manifest_num_tiers" "$manifest_min_num_tiers" "$manifest_np" \
         "$RECOVERY_SIZE" "$MOVE_TO_SKETCH" "$STREAM_SEED" "" "" "" "$manifest_profile_interval" \
         "$STATIC_GRAPH" "$DO_DELETIONS" \
         "$CURRENT_STREAM_FILE" "" "" "" "$space_path" \
@@ -590,6 +598,17 @@ process_stream() {
         echo "Info: num_tiers not provided; deriving num_tiers=${active_num_tiers} from --np=${NP}."
     fi
 
+    if [[ -n "$MIN_NUM_TIERS" ]]; then
+        if ! [[ "$MIN_NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Error: --min-num-tiers must be a positive integer (got '$MIN_NUM_TIERS')."
+            exit 1
+        fi
+        if [[ "$active_num_tiers" -lt "$MIN_NUM_TIERS" ]]; then
+            echo "Info: applying num_tiers floor ${MIN_NUM_TIERS} to resolved value ${active_num_tiers}."
+            active_num_tiers="$MIN_NUM_TIERS"
+        fi
+    fi
+
     active_np=$((active_num_tiers + 1))
     if $NP_SET && [[ "$NP" -ne "$active_np" ]]; then
         echo "Info: overriding --np=${NP}; using np=${active_np} (num_tiers + 1)."
@@ -615,7 +634,7 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries cfg_min_num_tiers <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
                     local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
                     if [[ -n "$cfg_profile_interval" ]]; then
@@ -672,6 +691,18 @@ process_stream() {
                     tier_resolution_desc="invalid->active(${active_num_tiers})"
                 fi
 
+                local min_num_tiers_to_use="${cfg_min_num_tiers:-$MIN_NUM_TIERS}"
+                if [[ -n "$min_num_tiers_to_use" ]]; then
+                    if ! [[ "$min_num_tiers_to_use" =~ ^[1-9][0-9]*$ ]]; then
+                        echo "Error: min_num_tiers must be a positive integer (got '$min_num_tiers_to_use') in config '$spec'."
+                        exit 1
+                    fi
+                    if [[ -z "$config_num_tiers" || "$config_num_tiers" -lt "$min_num_tiers_to_use" ]]; then
+                        config_num_tiers="$min_num_tiers_to_use"
+                        tier_resolution_desc="${tier_resolution_desc}, floor(${min_num_tiers_to_use})"
+                    fi
+                fi
+
                 local tiers_for_np="$config_num_tiers"
                 if [[ -z "$tiers_for_np" ]]; then
                     if [[ -n "$derived_tiers" ]]; then
@@ -705,6 +736,7 @@ process_stream() {
                 local args=(--algo "$cfg_algo" --cutset "$cfg_cutset" --sketch "$cfg_sketch" \
                     --stream "$CURRENT_STREAM_FILE" --np "$config_np" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
                 [[ -n "$config_num_tiers" ]] && args+=(--num-tiers "$config_num_tiers")
+                [[ -n "$min_num_tiers_to_use" ]] && args+=(--min-num-tiers "$min_num_tiers_to_use")
                 if [[ -n "$cfg_batch_size" ]]; then
                     if [[ "$cfg_batch_size" =~ ^[0-9]+$ ]]; then
                         args+=(--batch-size "$cfg_batch_size")
@@ -738,12 +770,14 @@ process_stream() {
                 --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
                 --hybrid --hybrid-threshold "$threshold" --auto-build)
             [[ -n "$active_num_tiers" ]] && hybrid_args+=(--num-tiers "$active_num_tiers")
+            [[ -n "$MIN_NUM_TIERS" ]] && hybrid_args+=(--min-num-tiers "$MIN_NUM_TIERS")
             register_config "${hybrid_args[@]}"
 
             local pure_args=(--algo "$MPI_ALGO" --cutset lct --sketch resizeable \
                 --stream "$CURRENT_STREAM_FILE" --np "$active_np" --output-dir "$CURRENT_OUTPUT_DIR" \
                 --auto-build)
             [[ -n "$active_num_tiers" ]] && pure_args+=(--num-tiers "$active_num_tiers")
+            [[ -n "$MIN_NUM_TIERS" ]] && pure_args+=(--min-num-tiers "$MIN_NUM_TIERS")
             register_config "${pure_args[@]}"
 
             register_config --algo cf \

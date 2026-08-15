@@ -14,7 +14,7 @@ batch_manifest_ensure() {
     local manifest_path="$1"
     if [[ ! -f "$manifest_path" ]]; then
         mkdir -p "$(dirname "$manifest_path")"
-        printf '%s\n' 'invocation_id	dataset	dataset_num_nodes	dataset_num_edges	bench_type	run_number	run_suffix	config	algo	cutset	sketch	hybrid	hybrid_threshold	hybrid_threshold_multiplier	batch_size	height_factor	num_tiers	np	recovery_size	move_to_sketch	stream_seed	post_queries_per_update	interleaved_queries_per_update	speed_interval	profile_interval	static_graph	do_deletions	stream_path	result_path	intervals_path	static_snapshot_path	space_path	space_summary_path	hybrid_summary_path	benchmark_summary_path	status_path	stdout_path	stderr_path' > "$manifest_path"
+        printf '%s\n' 'invocation_id	dataset	dataset_num_nodes	dataset_num_edges	bench_type	run_number	run_suffix	config	algo	cutset	sketch	hybrid	hybrid_threshold	hybrid_threshold_multiplier	batch_size	height_factor	num_tiers	min_num_tiers	np	recovery_size	move_to_sketch	stream_seed	post_queries_per_update	interleaved_queries_per_update	speed_interval	profile_interval	static_graph	do_deletions	stream_path	result_path	intervals_path	static_snapshot_path	space_path	space_summary_path	hybrid_summary_path	benchmark_summary_path	status_path	stdout_path	stderr_path' > "$manifest_path"
         BATCH_MANIFEST_PATHS+=("$manifest_path")
     fi
 }
@@ -28,7 +28,7 @@ batch_manifest_append() {
     local values=("$@")
     local index
     # Path fields begin with stream_path in the manifest schema.
-    for ((index = 26; index < ${#values[@]}; ++index)); do
+    for ((index = 27; index < ${#values[@]}; ++index)); do
         if [[ -n "${values[$index]}" && "${values[$index]}" = /* ]]; then
             values[$index]="$(realpath -m --relative-to="$manifest_dir" "${values[$index]}")"
         fi

@@ -37,10 +37,21 @@ SPEED_METRIC_FIELDS = [
     "operations_per_sec",
 ]
 
+CORRECTNESS_METRIC_FIELDS = [
+    "correctness_repeats", "correct_repeats", "incorrect_repeats",
+    "correctness_pass_rate", "detectable_insufficient_tiers_repeats",
+    "likely_undetectable_sketch_failure_repeats", "merged_component_failure_repeats",
+    "insufficient_tiers_observed_repeats", "first_failure_update",
+]
+
+CORRECTNESS_TEXT_FIELDS = [
+    "first_failure_phase", "failure_reasons", "likely_failure_causes",
+]
+
 CONFIG_FIELDS = [
     "dataset", "dataset_num_nodes", "dataset_num_edges", "config", "algo", "cutset", "sketch", "hybrid",
     "hybrid_threshold", "hybrid_threshold_multiplier", "batch_size", "height_factor",
-    "num_tiers", "np", "recovery_size", "move_to_sketch", "stream_seed",
+    "num_tiers", "min_num_tiers", "np", "recovery_size", "move_to_sketch", "stream_seed",
     "post_queries_per_update", "interleaved_queries_per_update",
     "speed_interval", "profile_interval", "static_graph", "do_deletions",
 ]
@@ -434,6 +445,67 @@ def summarize_speed(group: list[dict[str, str]]) -> dict[str, Any]:
     return output
 
 
+def summarize_correctness(group: list[dict[str, str]]) -> dict[str, Any]:
+    output: dict[str, Any] = config_columns(group[0])
+    output["hybrid_threshold_multiplier"] = infer_multiplier(group[0])
+    completed_manifests: set[int] = set()
+    repeats: list[dict[str, str]] = []
+
+    for manifest_index, manifest in enumerate(group):
+        result_path = manifest.get("result_path", "")
+        if not result_path or not os.path.isfile(result_path):
+            continue
+        rows = read_tsv(result_path)
+        run_rows = [row for row in rows if row.get("input", "") != "summary"]
+        if run_rows and run_outcome(manifest, True)[0] == "NORMAL":
+            repeats.extend(run_rows)
+            completed_manifests.add(manifest_index)
+
+    add_outcome_columns(output, group, completed_manifests)
+    if not repeats:
+        add_nan_defaults(output, CORRECTNESS_METRIC_FIELDS)
+        for field in CORRECTNESS_TEXT_FIELDS:
+            output.setdefault(field, "")
+        return output
+
+    incorrect = [row for row in repeats if row.get("correct", "").lower() != "true"]
+    causes = [row.get("likely_failure_cause", "") for row in incorrect
+              if row.get("likely_failure_cause", "")]
+    reasons = [row.get("reason", "") for row in incorrect if row.get("reason", "")]
+    insufficient_observed = [
+        row for row in repeats
+        if row.get("insufficient_tiers_observed", "").lower() == "true"
+    ]
+    failed_with_update = [
+        row for row in incorrect
+        if number(row, "first_failure_update", -1) >= 0
+    ]
+    first_failure = min(
+        failed_with_update,
+        key=lambda row: number(row, "first_failure_update"),
+        default=None,
+    )
+    total = len(repeats)
+    output.update({
+        "correctness_repeats": total,
+        "correct_repeats": total - len(incorrect),
+        "incorrect_repeats": len(incorrect),
+        "correctness_pass_rate": (total - len(incorrect)) / total,
+        "detectable_insufficient_tiers_repeats": causes.count("detectable_insufficient_tiers"),
+        "likely_undetectable_sketch_failure_repeats": causes.count("likely_undetectable_sketch_failure"),
+        "merged_component_failure_repeats": causes.count("implementation_failure_merged_components"),
+        "insufficient_tiers_observed_repeats": len(insufficient_observed),
+        "first_failure_update": first_failure.get("first_failure_update", "") if first_failure else NAN,
+        "first_failure_phase": first_failure.get("first_failure_phase", "") if first_failure else "",
+        "failure_reasons": " | ".join(sorted(set(reasons))),
+        "likely_failure_causes": " | ".join(sorted(set(causes))),
+    })
+    add_nan_defaults(output, CORRECTNESS_METRIC_FIELDS)
+    for field in CORRECTNESS_TEXT_FIELDS:
+        output.setdefault(field, "")
+    return output
+
+
 def write_summary(rows: list[dict[str, Any]], path: str) -> None:
     preferred = CONFIG_FIELDS + [
         "expected_runs", "completed_runs", "status", "outcome", "failed_run_outcomes",
@@ -459,14 +531,18 @@ def main() -> int:
         print(f"Error: manifest is empty: {args.manifest}", file=sys.stderr)
         return 2
     bench_types = {row.get("bench_type", "") for row in manifests}
-    if len(bench_types) != 1 or next(iter(bench_types)) not in {"speed", "profile"}:
-        print("Error: manifest must contain exactly one benchmark type: speed or profile", file=sys.stderr)
+    if len(bench_types) != 1 or next(iter(bench_types)) not in {"speed", "profile", "correctness"}:
+        print("Error: manifest must contain exactly one benchmark type: speed, profile, or correctness", file=sys.stderr)
         return 2
     bench_type = next(iter(bench_types))
     groups: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in manifests:
         groups[config_key(row)].append(row)
-    summarize = summarize_profile if bench_type == "profile" else summarize_speed
+    summarize = {
+        "profile": summarize_profile,
+        "speed": summarize_speed,
+        "correctness": summarize_correctness,
+    }[bench_type]
     summaries = [summarize(group) for group in groups.values()]
     output = args.output or str(Path(args.manifest).with_suffix("")) + "_config_summary.tsv"
     write_summary(summaries, output)

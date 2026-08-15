@@ -278,6 +278,19 @@ void InputNode::process_updates() {
     }
 }
 
+#ifdef CORRECTNESS_DIAGNOSTICS
+TierMaximalityCheck InputNode::take_tier_maximality_check() {
+    process_all_updates();
+    update_buffer[0] = {};
+    update_buffer[0].status = UPDATE_CORRECTNESS_DIAGNOSTIC;
+    bcast(update_buffer, sizeof(UpdateMessage) * buffer_capacity, 0);
+    TierMaximalityCheck result;
+    MPI_Recv(&result, sizeof(TierMaximalityCheck), MPI_BYTE, num_tiers,
+             0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    return result;
+}
+#endif
+
 void InputNode::process_all_updates() {
     while (buffer_size > 1)
         process_updates();

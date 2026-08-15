@@ -58,6 +58,16 @@ void TierNode<TreeStrategy>::main() {
             MPI_Send(&report, sizeof(SpaceReportMessage), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
             continue;
         }
+#ifdef CORRECTNESS_DIAGNOSTICS
+        if (update_buffer[0].status == UPDATE_CORRECTNESS_DIAGNOSTIC) {
+            if (tier_num == num_tiers - 1) {
+                MPI_Send(&tier_maximality_check_, sizeof(TierMaximalityCheck), MPI_BYTE,
+                         0, 0, MPI_COMM_WORLD);
+                tier_maximality_check_ = {};
+            }
+            continue;
+        }
+#endif
         uint32_t num_updates = update_buffer[0].update.edge.src;
         using_sliding_window = (bool)update_buffer[0].update.edge.dst;
         // Do the greedy refresh check for all updates in the batch
@@ -101,6 +111,12 @@ void TierNode<TreeStrategy>::main() {
                 this_sizes.size2 = endpoint_views.second.size();
                 this_sizes_buffer[i] = this_sizes;
             }
+#ifdef CORRECTNESS_DIAGNOSTICS
+            if (tier_num == num_tiers - 1 && !tier_maximality_check_.insufficient_tiers &&
+                (query_result_buffer[2*i] != ZERO || query_result_buffer[2*i+1] != ZERO)) {
+                tier_maximality_check_ = {true, update.edge};
+            }
+#endif
         }
         STOP(sketch_update_time, sketch_update_timer);
         START(size_message_passing_timer);

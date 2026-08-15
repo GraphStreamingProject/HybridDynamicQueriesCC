@@ -1,5 +1,8 @@
 #pragma once
 #include "types.h"
+#ifdef CORRECTNESS_DIAGNOSTICS
+#include "correctness_diagnostics.h"
+#endif
 #include "util.h"
 #include <vector>
 #include <atomic>
@@ -52,6 +55,9 @@ class BatchTiers {
         parlay::sequence<int32_t> _unique_update_ids;
         
         std::vector<GraphUpdate> transaction_log;
+    #ifdef CORRECTNESS_DIAGNOSTICS
+        TierMaximalityCheck tier_maximality_check_;
+    #endif
 
         // TODO - add the sketchless ETT for querying 
         // 
@@ -223,6 +229,13 @@ class BatchTiers {
         long get_num_tree_ops() const { return tree_ops_count; }
         int get_max_link_tier() const { return _max_link_tier; }
         void reset_max_link_tier() { _max_link_tier = -1; }
+    #ifdef CORRECTNESS_DIAGNOSTICS
+        TierMaximalityCheck take_tier_maximality_check() {
+            TierMaximalityCheck result = tier_maximality_check_;
+            tier_maximality_check_ = {};
+            return result;
+        }
+    #endif
 
         // find the index of the highest everywhere-maximal tier.
         

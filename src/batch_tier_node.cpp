@@ -204,6 +204,19 @@ requires(CutsetDataStructure<TreeStrategy, typename TreeStrategy::SketchType>)
 bool BatchTierNode<TreeStrategy>::check_and_report_isolations() {
   std::vector<IsolationCandidate> candidates;
   bool found_isolation = false;
+
+#ifdef CORRECTNESS_DIAGNOSTICS
+  if (tier_num == num_tiers - 1 && !tier_maximality_check_.insufficient_tiers &&
+      !update_buffer.empty()) {
+    for (const auto& [cid, comp] : component_map) {
+      (void)cid;
+      if (comp.sample_result != ZERO) {
+        tier_maximality_check_ = {true, update_buffer.front()};
+        break;
+      }
+    }
+  }
+#endif
   
   // Wipe active_vertices safely after deduplication completes,
   // we will exclusively populate it with unresolved nodes for the next round.
@@ -302,6 +315,17 @@ void BatchTierNode<TreeStrategy>::main() {
                INPUT_NODE_RANK, 0, MPI_COMM_WORLD);
       continue;
     }
+
+#ifdef CORRECTNESS_DIAGNOSTICS
+    if (control_message.status == BATCH_UPDATE_CORRECTNESS_DIAGNOSTIC) {
+      if (tier_num == num_tiers - 1) {
+        MPI_Send(&tier_maximality_check_, sizeof(TierMaximalityCheck), MPI_BYTE,
+                 INPUT_NODE_RANK, 0, MPI_COMM_WORLD);
+        tier_maximality_check_ = {};
+      }
+      continue;
+    }
+#endif
 
     const uint32_t num_updates = control_message.num_updates;
     const uint32_t num_tree_cuts = control_message.num_tree_cuts;

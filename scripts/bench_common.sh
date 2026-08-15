@@ -20,6 +20,7 @@ STREAM=""
 BATCH_SIZE=""
 HEIGHT_FACTOR=""
 NUM_TIERS=""
+MIN_NUM_TIERS=""
 NP=""
 MPI_FLAGS=""
 RANK0_CPUS="1"
@@ -50,6 +51,7 @@ bench_parse_common_args() {
       (--batch-size)       BATCH_SIZE="$2"; shift 2;;
       (--height-factor)    HEIGHT_FACTOR="$2"; shift 2;;
       (--num-tiers)        NUM_TIERS="$2"; shift 2;;
+      (--min-num-tiers)    MIN_NUM_TIERS="$2"; shift 2;;
       (--np)               NP="$2"; shift 2;;
       (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
       (--rank0-cpus)       RANK0_CPUS="$2"; shift 2;;
@@ -91,6 +93,7 @@ bench_parse_common_args() {
         echo "  --batch-size <N>       Override batch size"
         echo "  --height-factor <F>    Override height factor"
         echo "  --num-tiers <N>        Override number of tiers"
+        echo "  --min-num-tiers <N>    Floor the resolved number of tiers"
         echo "  --hybrid-threshold <N> Override hybrid threshold"
         echo "  --hybrid-threshold-multiplier <M>  Set threshold to M * num_tiers"
         echo "  --recovery-size <N>    Override recovery sketch size (default: hybrid-threshold/8)"
@@ -122,6 +125,26 @@ bench_parse_common_args() {
   if [[ -z "$STREAM" ]]; then
     echo "ERROR: --stream is required"
     exit 1
+  fi
+
+  if [[ -n "$MIN_NUM_TIERS" ]]; then
+    if ! [[ "$MIN_NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
+      echo "ERROR: --min-num-tiers must be a positive integer"
+      exit 1
+    fi
+    if [[ -z "$NUM_TIERS" && "$NP" =~ ^[0-9]+$ && "$NP" -gt 1 ]]; then
+      NUM_TIERS=$((NP - 1))
+    fi
+    if ! [[ "$NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
+      echo "ERROR: --min-num-tiers requires a resolved --num-tiers N or --np N (for MPI)."
+      exit 1
+    fi
+    if [[ "$NUM_TIERS" -lt "$MIN_NUM_TIERS" ]]; then
+      NUM_TIERS="$MIN_NUM_TIERS"
+      if [[ -n "$NP" ]]; then
+        NP=$((NUM_TIERS + 1))
+      fi
+    fi
   fi
 
   if [[ -n "$HYBRID_THRESHOLD_MULTIPLIER" ]]; then

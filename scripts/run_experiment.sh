@@ -23,6 +23,7 @@ NP=""
 BATCH_SIZE=""
 HEIGHT_FACTOR=""
 NUM_TIERS=""
+MIN_NUM_TIERS=""
 MPI_FLAGS=""
 HYBRID_THRESHOLD=""
 SPEED_INTERVAL=""
@@ -40,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     (--batch-size)       BATCH_SIZE="$2"; shift 2;;
     (--height-factor)    HEIGHT_FACTOR="$2"; shift 2;;
     (--num-tiers)        NUM_TIERS="$2"; shift 2;;
+    (--min-num-tiers)    MIN_NUM_TIERS="$2"; shift 2;;
     (--mpi-flags)        MPI_FLAGS="$2"; shift 2;;
     (--hybrid-threshold) HYBRID_THRESHOLD="$2"; shift 2;;
     (--speed-interval)   SPEED_INTERVAL="$2"; shift 2;;
@@ -65,6 +67,7 @@ COMMON_FLAGS=()
 [[ -n "$BATCH_SIZE" ]]       && COMMON_FLAGS+=(--batch-size "$BATCH_SIZE")
 [[ -n "$HEIGHT_FACTOR" ]]    && COMMON_FLAGS+=(--height-factor "$HEIGHT_FACTOR")
 [[ -n "$NUM_TIERS" ]]        && COMMON_FLAGS+=(--num-tiers "$NUM_TIERS")
+[[ -n "$MIN_NUM_TIERS" ]]    && COMMON_FLAGS+=(--min-num-tiers "$MIN_NUM_TIERS")
 [[ -n "$MPI_FLAGS" ]]        && COMMON_FLAGS+=(--mpi-flags "$MPI_FLAGS")
 [[ -n "$HYBRID_THRESHOLD" ]] && COMMON_FLAGS+=(--hybrid-threshold "$HYBRID_THRESHOLD")
 [[ "$TYPE" == "speed" && -n "$SPEED_INTERVAL" ]] && COMMON_FLAGS+=(--speed-interval "$SPEED_INTERVAL")

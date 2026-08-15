@@ -25,6 +25,7 @@ enum BatchUpdateStatus : uint8_t {
   BATCH_UPDATE_NORMAL = 0,
   BATCH_UPDATE_END    = 1,
   BATCH_UPDATE_SPACE_REPORT = 2,
+  BATCH_UPDATE_CORRECTNESS_DIAGNOSTIC = 3,
 };
 
 enum BatchSketchOp : uint8_t {
@@ -104,6 +105,9 @@ class BatchInputNode {
   std::vector<GraphUpdate> transaction_log;
 
   BatchControlMessage control_message;
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck tier_maximality_check_;
+#endif
 
   // Scratch buffers used during process_updates()
   std::vector<IsolationCandidate> candidate_buffer;
@@ -136,6 +140,9 @@ public:
   void process_all_updates();
   bool connectivity_query(node_id_t a, node_id_t b);
   std::vector<std::set<node_id_t>> cc_query();
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck take_tier_maximality_check();
+#endif
   void end();
 
   SpaceReport report_space_usage();
@@ -196,6 +203,9 @@ class BatchTierNode {
   // Scratch state carried between check_and_report_isolations() and main().
   bool _found_isolation = false;
   std::vector<IsolationCandidate> _cached_candidates;
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck tier_maximality_check_;
+#endif
 
   // Memoize node→representative for LCT in non-LAZY mode.
   // Keyed by raw Node* (as void*), valued by ComponentID.

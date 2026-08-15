@@ -4,6 +4,10 @@
 #include <vector>
 #include <atomic>
 
+#ifdef CORRECTNESS_DIAGNOSTICS
+#include "correctness_diagnostics.h"
+#endif
+
 #include "euler_tour_tree.h"
 // #include "link_cut_tree.h"
 #include "cutsets/ufo_cutset.h"
@@ -45,6 +49,9 @@ private:
   long tree_ops_count = 0;
   int _max_link_tier = -1;
   std::vector<GraphUpdate> transaction_log;
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck tier_maximality_check_;
+#endif
   void refresh(GraphUpdate update, bool did_cut);
 
 public:
@@ -124,4 +131,11 @@ public:
   long get_num_tree_ops() const { return tree_ops_count; }
   int get_max_link_tier() const { return _max_link_tier; }
   void reset_max_link_tier() { _max_link_tier = -1; }
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck take_tier_maximality_check() {
+    TierMaximalityCheck result = tier_maximality_check_;
+    tier_maximality_check_ = {};
+    return result;
+  }
+#endif
 };

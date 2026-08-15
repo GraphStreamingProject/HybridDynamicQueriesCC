@@ -83,6 +83,12 @@ private:
             });
         }
 
+    #ifdef CORRECTNESS_DIAGNOSTICS
+        TierMaximalityCheck take_tier_maximality_check() {
+            return sketching_algo.take_tier_maximality_check();
+        }
+    #endif
+
         void stop() {
             running.store(false);
             if (worker.joinable()) {
@@ -771,6 +777,13 @@ public:
         pending_connectivity_work = false;
         updates_since_checkpoint = 0;
     }
+
+#ifdef CORRECTNESS_DIAGNOSTICS
+    TierMaximalityCheck take_tier_maximality_check() {
+        sync_queues();
+        return sketch_subsystem.take_tier_maximality_check();
+    }
+#endif
 
     std::vector<std::set<node_id_t>> cc_query() {
         sync_sketch_connectivity_if_needed();

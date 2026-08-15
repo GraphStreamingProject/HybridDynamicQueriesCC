@@ -24,6 +24,7 @@ MATCH_FIELDS = (
     "batch_size",
     "height_factor",
     "num_tiers",
+    "min_num_tiers",
     "np",
     "recovery_size",
     "move_to_sketch",

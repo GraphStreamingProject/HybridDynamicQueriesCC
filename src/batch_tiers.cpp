@@ -222,6 +222,12 @@ void BatchTiers<TreeStrategy>::update_batch(const parlay::sequence<GraphUpdate> 
     }
     for (uint32_t tier = first_isolated_tier; tier < ett.size()-1; tier++) {
         bool components_maximized = _fix_isolations_at_tier(updates, tier);
+#ifdef CORRECTNESS_DIAGNOSTICS
+        if (!components_maximized && tier + 2 == ett.size() &&
+            !tier_maximality_check_.insufficient_tiers && !updates.empty()) {
+            tier_maximality_check_ = {true, updates.front().edge};
+        }
+#endif
         if (components_maximized) {
             // if all components were maximized, we can skip the next tier
             // we know that at this point, there are no isolations at higher tiers.

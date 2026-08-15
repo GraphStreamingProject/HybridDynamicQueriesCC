@@ -9,6 +9,9 @@
 #include <vector>
 
 #include "types.h"
+#ifdef CORRECTNESS_DIAGNOSTICS
+#include "correctness_diagnostics.h"
+#endif
 #include "util.h"
 #include "euler_tour_tree.h"
 // #include "link_cut_tree.h"
@@ -25,7 +28,8 @@ enum TreeOperationType: uint8_t {
   NOT_ISOLATED=0, ISOLATED=1, EMPTY, LINK, CUT, LCT_QUERY, MAXIMIZED
 };
 
-enum UpdateStatus : uint8_t { UPDATE_NORMAL = 0, UPDATE_END = 1, UPDATE_SPACE_REPORT = 2 };
+enum UpdateStatus : uint8_t { UPDATE_NORMAL = 0, UPDATE_END = 1, UPDATE_SPACE_REPORT = 2,
+                              UPDATE_CORRECTNESS_DIAGNOSTIC = 3 };
 
 struct UpdateMessage {
   GraphUpdate update;
@@ -86,6 +90,9 @@ class InputNode {
   int history_size;
   int isolation_count;
   bool using_sliding_window = false;
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck tier_maximality_check_;
+#endif
 public:
   InputNode(node_id_t num_nodes, uint32_t num_tiers, int batch_size, int seed);
   ~InputNode();
@@ -105,6 +112,9 @@ public:
   void process_all_updates();
   bool connectivity_query(node_id_t a, node_id_t b);
   std::vector<std::set<node_id_t>> cc_query();
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck take_tier_maximality_check();
+#endif
   void end();
 
   /**

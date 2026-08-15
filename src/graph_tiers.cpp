@@ -171,6 +171,13 @@ void GraphTiers<TreeStrategy>::refresh(GraphUpdate update, bool did_cut) {
 			START(sq);
 			SketchSample query_result = ett_agg.sample();
 			STOP(sketch_query, sq);
+
+#ifdef CORRECTNESS_DIAGNOSTICS
+			if (tier + 2 == ett.size() && query_result.result != ZERO &&
+				!tier_maximality_check_.insufficient_tiers) {
+				tier_maximality_check_ = {true, update.edge};
+			}
+#endif
 			
 			// Check for new edge to eliminate isolation
 			if (query_result.result != GOOD)

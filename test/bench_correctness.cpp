@@ -135,6 +135,9 @@ struct Result {
   long first_failure_update = -1;
   std::string first_failure_phase;
   std::string reason;
+  bool insufficient_tiers_observed = false;
+  Edge insufficient_tiers_edge{};
+  std::string likely_failure_cause;
   long elapsed_ms = 0;
 };
 
@@ -310,11 +313,27 @@ static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
   auto check = [&](const std::string& phase) {
     ++result.checks;
     std::string reason;
-    if (!compare_partition(num_nodes, active_edges, get_components(system), reason) && result.correct) {
+    const auto components = get_components(system);
+    const TierMaximalityCheck tier_check = system.take_tier_maximality_check();
+    if (tier_check.insufficient_tiers && !result.insufficient_tiers_observed) {
+      result.insufficient_tiers_observed = true;
+      result.insufficient_tiers_edge = tier_check.update_induced_on;
+    }
+    if (!compare_partition(num_nodes, active_edges, components, reason) && result.correct) {
       result.correct = false;
       result.first_failure_update = result.updates;
       result.first_failure_phase = phase;
       result.reason = reason;
+      if (reason == "split a reference connected component" &&
+          result.insufficient_tiers_observed) {
+        result.likely_failure_cause = "detectable_insufficient_tiers";
+      } else if (reason == "split a reference connected component") {
+        result.likely_failure_cause = "likely_undetectable_sketch_failure";
+      } else if (reason == "merged distinct reference connected components") {
+        result.likely_failure_cause = "implementation_failure_merged_components";
+      } else {
+        result.likely_failure_cause = "unclassified";
+      }
     }
   };
 
@@ -364,17 +383,27 @@ static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
 static void write_results(std::ostream& out, const std::string& input, const std::string& config_name,
                           node_id_t nodes, const std::vector<Result>& results) {
   out << "input\tconfig\trepeat\tseed\tnum_nodes\tupdates\tchecks\tcorrect\t"
-         "first_failure_update\tfirst_failure_phase\treason\telapsed_ms\n";
+      "first_failure_update\tfirst_failure_phase\treason\tlikely_failure_cause\t"
+      "insufficient_tiers_observed\tinsufficient_tiers_edge_src\t"
+      "insufficient_tiers_edge_dst\telapsed_ms\n";
   long failures = 0;
   for (const Result& result : results) {
     failures += !result.correct;
     out << input << '\t' << config_name << '\t' << result.repeat << '\t' << result.seed << '\t'
         << nodes << '\t' << result.updates << '\t' << result.checks << '\t'
         << (result.correct ? "true" : "false") << '\t' << result.first_failure_update << '\t'
-        << result.first_failure_phase << '\t' << result.reason << '\t' << result.elapsed_ms << '\n';
+        << result.first_failure_phase << '\t' << result.reason << '\t'
+        << result.likely_failure_cause << '\t'
+        << (result.insufficient_tiers_observed ? "true" : "false") << '\t';
+    if (result.insufficient_tiers_observed) {
+      out << result.insufficient_tiers_edge.src << '\t' << result.insufficient_tiers_edge.dst;
+    } else {
+      out << "\t";
+    }
+    out << '\t' << result.elapsed_ms << '\n';
   }
   out << "summary\t" << config_name << "\t-\t-\t" << nodes << "\t-\t-\t"
-      << (failures == 0 ? "true" : "false") << "\t-\t-\t-\t-\t"
+      << (failures == 0 ? "true" : "false") << "\t-\t-\t-\t-\t-\t-\t-\t-\t"
       << "correct_repeats=" << (results.size() - failures) << "/" << results.size()
       << ";incorrect_repeats=" << failures << "/" << results.size() << '\n';
 }

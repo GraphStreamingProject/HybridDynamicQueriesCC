@@ -541,6 +541,12 @@ class SerialConnectivityManager {
         void force_sync() {
             apply_connectivity_sync_barrier();
         }
+
+#ifdef CORRECTNESS_DIAGNOSTICS
+        TierMaximalityCheck take_tier_maximality_check() {
+            return sketching_algo.take_tier_maximality_check();
+        }
+#endif
         
         std::vector<std::set<node_id_t>> cc_query() {
             sync_connectivity_if_needed();
