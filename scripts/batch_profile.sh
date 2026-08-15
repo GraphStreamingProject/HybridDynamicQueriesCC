@@ -599,11 +599,11 @@ process_stream() {
     fi
 
     if [[ -n "$MIN_NUM_TIERS" ]]; then
-        if ! [[ "$MIN_NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Error: --min-num-tiers must be a positive integer (got '$MIN_NUM_TIERS')."
+        if ! [[ "$MIN_NUM_TIERS" =~ ^[0-9]+$ ]]; then
+            echo "Error: --min-num-tiers must be a non-negative integer (got '$MIN_NUM_TIERS')."
             exit 1
         fi
-        if [[ "$active_num_tiers" -lt "$MIN_NUM_TIERS" ]]; then
+        if [[ "$MIN_NUM_TIERS" -gt 0 && "$active_num_tiers" -lt "$MIN_NUM_TIERS" ]]; then
             echo "Info: applying num_tiers floor ${MIN_NUM_TIERS} to resolved value ${active_num_tiers}."
             active_num_tiers="$MIN_NUM_TIERS"
         fi
@@ -693,11 +693,11 @@ process_stream() {
 
                 local min_num_tiers_to_use="${cfg_min_num_tiers:-$MIN_NUM_TIERS}"
                 if [[ -n "$min_num_tiers_to_use" ]]; then
-                    if ! [[ "$min_num_tiers_to_use" =~ ^[1-9][0-9]*$ ]]; then
-                        echo "Error: min_num_tiers must be a positive integer (got '$min_num_tiers_to_use') in config '$spec'."
+                    if ! [[ "$min_num_tiers_to_use" =~ ^[0-9]+$ ]]; then
+                        echo "Error: min_num_tiers must be a non-negative integer (got '$min_num_tiers_to_use') in config '$spec'."
                         exit 1
                     fi
-                    if [[ -z "$config_num_tiers" || "$config_num_tiers" -lt "$min_num_tiers_to_use" ]]; then
+                    if [[ "$min_num_tiers_to_use" -gt 0 && ( -z "$config_num_tiers" || "$config_num_tiers" -lt "$min_num_tiers_to_use" ) ]]; then
                         config_num_tiers="$min_num_tiers_to_use"
                         tier_resolution_desc="${tier_resolution_desc}, floor(${min_num_tiers_to_use})"
                     fi

@@ -159,6 +159,9 @@ class TierNode {
   SampleResult* query_result_buffer;
   bool* split_revert_buffer;
   bool using_sliding_window = false;
+#ifdef CORRECTNESS_DIAGNOSTICS
+  TierMaximalityCheck tier_maximality_check_;
+#endif
   void initialize_node(node_id_t u) {
       ett.initialize_node(u);
   };

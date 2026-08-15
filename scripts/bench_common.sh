@@ -128,21 +128,23 @@ bench_parse_common_args() {
   fi
 
   if [[ -n "$MIN_NUM_TIERS" ]]; then
-    if ! [[ "$MIN_NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
-      echo "ERROR: --min-num-tiers must be a positive integer"
+    if ! [[ "$MIN_NUM_TIERS" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: --min-num-tiers must be a non-negative integer"
       exit 1
     fi
-    if [[ -z "$NUM_TIERS" && "$NP" =~ ^[0-9]+$ && "$NP" -gt 1 ]]; then
-      NUM_TIERS=$((NP - 1))
-    fi
-    if ! [[ "$NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
-      echo "ERROR: --min-num-tiers requires a resolved --num-tiers N or --np N (for MPI)."
-      exit 1
-    fi
-    if [[ "$NUM_TIERS" -lt "$MIN_NUM_TIERS" ]]; then
-      NUM_TIERS="$MIN_NUM_TIERS"
-      if [[ -n "$NP" ]]; then
-        NP=$((NUM_TIERS + 1))
+    if [[ "$MIN_NUM_TIERS" -gt 0 ]]; then
+      if [[ -z "$NUM_TIERS" && "$NP" =~ ^[0-9]+$ && "$NP" -gt 1 ]]; then
+        NUM_TIERS=$((NP - 1))
+      fi
+      if ! [[ "$NUM_TIERS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: --min-num-tiers requires a resolved --num-tiers N or --np N (for MPI)."
+        exit 1
+      fi
+      if [[ "$NUM_TIERS" -lt "$MIN_NUM_TIERS" ]]; then
+        NUM_TIERS="$MIN_NUM_TIERS"
+        if [[ -n "$NP" ]]; then
+          NP=$((NUM_TIERS + 1))
+        fi
       fi
     fi
   fi
