@@ -334,6 +334,17 @@ static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
       } else {
         result.likely_failure_cause = "unclassified";
       }
+      std::cout << "[correctness] repeat " << repeat << "/" << cfg.repeats
+                << " first failure at update " << result.first_failure_update
+                << " (phase=" << result.first_failure_phase
+                << ", reason=" << result.reason
+                << ", likely_cause=" << result.likely_failure_cause;
+      if (result.insufficient_tiers_observed) {
+        std::cout << ", insufficient_tiers_edge="
+                  << result.insufficient_tiers_edge.src << ','
+                  << result.insufficient_tiers_edge.dst;
+      }
+      std::cout << ')' << std::endl;
     }
   };
 
@@ -369,7 +380,7 @@ static Result run_repeat(System& system, const Config& cfg, node_id_t num_nodes,
     }
   } else {
     BinaryGraphStream stream(cfg.input_path, 100000);
-    for (long operation = 0; operation < stream.edges(); ++operation) {
+    for (uint64_t operation = 0; operation < stream.edges(); ++operation) {
       apply(stream.get_edge(), "stream");
     }
     if (result.updates % cfg.check_interval != 0) check("end_stream");

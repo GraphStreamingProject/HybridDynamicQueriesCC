@@ -7,7 +7,7 @@
       "hybrid": true,
       "batch_size": 10000,
       "hybrid_threshold_multiplier": 25,
-      "min_num_tiers": 0,
+      "min_num_tiers": 15,
       "num_tiers": "derived",
       "correctness_repeats": 50,
       "correctness_check_interval": 100000
