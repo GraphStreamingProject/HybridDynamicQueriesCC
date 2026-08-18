@@ -16,7 +16,7 @@
 
 class TopLevelForest {
 public:
-    using TopLevelLct = LinkCutTreeMaxAgg<int8_t, std::vector<NodeMaxLCT<int8_t>>>;
+    using TopLevelLct = LinkCutTreeMaxAgg<int8_t>;
 
     TopLevelForest(node_id_t num_nodes, uint64_t seed)
         : link_cut_tree(num_nodes), num_nodes(num_nodes)

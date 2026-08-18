@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "types.h"
+#include "default_containers.h"
 #include "util.h"
 
 #include <absl/container/flat_hash_map.h>
@@ -60,8 +61,10 @@ class NodeMaxLCT {
 
 template <
 typename WeightT,
-typename Container = absl::flat_hash_map<node_id_t, NodeMaxLCT<WeightT>*>
-// typename Container = std::vector<NodeMaxLCT<WeightT>>
+typename Container = std::conditional_t<
+  use_vector_default_container,
+  std::vector<NodeMaxLCT<WeightT>>,
+  absl::flat_hash_map<node_id_t, NodeMaxLCT<WeightT>*>>
 >
 class LinkCutTreeMaxAgg {
  public:
