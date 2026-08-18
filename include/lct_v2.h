@@ -348,6 +348,12 @@ template <typename WeightT, typename Container>
 LinkCutTreeMaxAgg<WeightT, Container>::~LinkCutTreeMaxAgg() {
   if constexpr (std::is_same_v<Container, std::vector<NodeMaxLCT<WeightT>>>) {
       verts.clear();
+  } else {
+      for (auto& [vertex, node] : verts) {
+          (void)vertex;
+          delete node;
+      }
+      verts.clear();
   }
 }
 

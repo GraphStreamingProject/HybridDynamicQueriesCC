@@ -641,10 +641,7 @@ public:
             return false;
         }
 
-        // Keep driver-side bookkeeping and queued lifecycle updates in sync.
-        uninitialize_vertex_sketch(vertex);
-
-        // Remove recovered edges from sketch connectivity only.
+        // Disconnect the vertex before destroying its sparse top-level forest node.
         for (node_id_t other_vertex : _neighbors_buffer) {
             if (other_vertex != vertex) {
                 enqueue_delete_from_sketch_only(vertex, other_vertex);
@@ -652,6 +649,11 @@ public:
         }
 
         pending_connectivity_work = true;
+        sync_queues();
+        flush_transaction_log();
+        last_flushed_sketch_seq = sketch_subsystem.processed_seq();
+
+        uninitialize_vertex_sketch(vertex);
 
         // Complete sketch + recovery command processing and apply sketch commits.
         sync_queues();

@@ -315,6 +315,25 @@ TEST(LCTv2Correctness, HasEdgeBasic) {
     EXPECT_FALSE(lct.connected(0, 3));
 }
 
+TEST(LCTv2Correctness, SparseNodeCanBeReinitializedAfterDisconnect) {
+    using MapLct = LinkCutTreeMaxAgg<
+        int8_t,
+        absl::flat_hash_map<node_id_t, NodeMaxLCT<int8_t>*>>;
+
+    MapLct lct(3);
+    lct.initialize_all_nodes(3);
+    lct.link(0, 1, static_cast<int8_t>(1));
+    lct.cut(0, 1);
+
+    lct.uninitialize_node(0);
+    lct.initialize_node(0);
+    lct.link(0, 2, static_cast<int8_t>(2));
+
+    EXPECT_TRUE(lct.connected(0, 2));
+    EXPECT_TRUE(lct.has_edge(0, 2));
+    EXPECT_FALSE(lct.connected(0, 1));
+}
+
 TEST(LCTv2Correctness, HasEdgeMatchesPathOnAdjacentPairs) {
     LinkCutTreeMaxAgg<int8_t> lct(10);
     lct.initialize_all_nodes(10);
