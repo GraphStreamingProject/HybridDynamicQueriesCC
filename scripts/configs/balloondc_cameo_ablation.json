@@ -1,0 +1,32 @@
+{
+  "configs": [
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "fixed",
+      "hybrid": false,
+      "batch_size": 10000,
+      "num_tiers": "derived",
+      "min_num_tiers": 15,
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_num_queries": 20000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    },
+    {
+      "algo": "mpi_batch",
+      "cutset": "lct",
+      "sketch": "resizeable",
+      "hybrid": false,
+      "batch_size": 10000,
+      "num_tiers": "derived",
+      "min_num_tiers": 15,
+      "speed_interval": 1000000,
+      "profile_interval": 1000000,
+      "post_num_queries": 20000000,
+      "post_queries_per_update": 0,
+      "interleaved_queries_per_update": 0
+    }
+  ]
+}
