@@ -23,7 +23,8 @@ SYSTEM_NAMES = ["Cluster Forest", r"\textsc{HybridSCALE}", r"\textsc{CUPCaKE}"]
 
 def process_dataset(
     dataset_name: str,
-    base_revision: Path,
+    base_cluster_forest: Path,
+    base_hybridscale: Path,
     base_cupcake: Path
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, str]]]:
     
@@ -43,104 +44,114 @@ def process_dataset(
             data[metric][sys_name] = np.nan
             annot[metric][sys_name] = "NaN"
         
-    dataset_dir = base_revision / f"{dataset_name}_sym"
-    dataset_cupcake_dir = base_cupcake / f"{dataset_name}_sym"
-    
-    manifest_paths = []
-    if dataset_dir.is_dir():
-        manifest_paths.extend([m for m in dataset_dir.glob("speed_manifest_*.tsv") if not m.name.endswith("_config_summary.tsv")])
-    if dataset_cupcake_dir.is_dir():
-        manifest_paths.extend([m for m in dataset_cupcake_dir.glob("speed_manifest_*.tsv") if not m.name.endswith("_config_summary.tsv")])
-        
-    for manifest in manifest_paths:
-        try:
-            summary_path = summarize_manifest(manifest, refresh=False)
-        except Exception as e:
-            print(f"Warning: Failed to summarize {manifest}: {e}", file=sys.stderr)
+    result_sources = [
+        ("Cluster Forest", base_cluster_forest),
+        (r"\textsc{HybridSCALE}", base_hybridscale),
+        (r"\textsc{CUPCaKE}", base_cupcake),
+    ]
+
+    for expected_system, base_dir in result_sources:
+        dataset_dir = base_dir / f"{dataset_name}_sym"
+        if not dataset_dir.is_dir():
             continue
-            
-        summary_df = pd.read_csv(summary_path, sep="\t")
-        if summary_df.empty:
-            continue
-            
-        row = summary_df.iloc[-1]
-        
-        algo = str(row.get("algo", ""))
-        config = str(row.get("config", ""))
-        
-        sys_name = None
-        if algo == "cf":
-            sys_name = "Cluster Forest"
-        elif "hybrid" in config:
-            sys_name = r"\textsc{HybridSCALE}"
-        elif "fixed" in config and algo == "mpi":
-            sys_name = r"\textsc{CUPCaKE}"
-            
-        if not sys_name:
-            continue
-            
-        outcome = str(row.get("outcome", ""))
-        is_oom = (outcome == "OOM")
-            
-        # 1. Space
-        if is_oom:
-            data["Space (GB)"][sys_name] = np.nan
-            annot["Space (GB)"][sys_name] = r"$\ge 128$"
-        else:
+        manifest_paths = [
+            manifest for manifest in dataset_dir.glob("speed_manifest_*.tsv")
+            if not manifest.name.endswith("_config_summary.tsv")
+        ]
+        for manifest in manifest_paths:
             try:
-                peak_bytes = float(row.get("peak_total_bytes", np.nan))
-                val = peak_bytes / 1e9
-                data["Space (GB)"][sys_name] = val
-                if not np.isnan(val):
-                    annot["Space (GB)"][sys_name] = f"{val:.2f}"
-            except ValueError:
-                pass
-            
-        # 2. Update Speed
-        if is_oom:
-            annot["Update Speed (100k/s)"][sys_name] = "OOM"
-        else:
-            try:
-                insert_ups = str(row.get("insert_updates_per_sec", "nan"))
-                if insert_ups.lower() != "nan" and float(insert_ups) > 0:
-                    ups = float(insert_ups)
-                else:
-                    ups = float(row.get("updates_per_sec", np.nan))
-                val = ups / 100000.0
-                data["Update Speed (100k/s)"][sys_name] = val
-                if not np.isnan(val):
-                    annot["Update Speed (100k/s)"][sys_name] = f"{val:.1f}"
-            except ValueError:
-                pass
-            
-        # 3. Query Speed
-        if is_oom:
-            annot["Query Speed (100k/s)"][sys_name] = "OOM"
-        else:
-            try:
-                query_ups = float(row.get("post_queries_per_sec", np.nan))
-                val = query_ups / 100000.0
-                data["Query Speed (100k/s)"][sys_name] = val
-                if not np.isnan(val):
-                    annot["Query Speed (100k/s)"][sys_name] = f"{val:.1f}"
-            except ValueError:
-                pass
+                summary_path = summarize_manifest(manifest, refresh=False)
+            except Exception as e:
+                print(f"Warning: Failed to summarize {manifest}: {e}", file=sys.stderr)
+                continue
+
+            summary_df = pd.read_csv(summary_path, sep="\t")
+            if summary_df.empty:
+                continue
+
+            row = summary_df.iloc[-1]
+
+            algo = str(row.get("algo", ""))
+            config = str(row.get("config", ""))
+
+            is_expected_system = (
+                (expected_system == "Cluster Forest" and algo == "cf")
+                or (expected_system == r"\textsc{HybridSCALE}" and "hybrid" in config)
+                or (expected_system == r"\textsc{CUPCaKE}" and "fixed" in config and algo == "mpi")
+            )
+            if not is_expected_system:
+                continue
+            sys_name = expected_system
+
+            outcome = str(row.get("outcome", ""))
+            is_oom = (outcome == "OOM")
+
+            # 1. Space
+            if is_oom:
+                data["Space (GB)"][sys_name] = np.nan
+                annot["Space (GB)"][sys_name] = r"$\ge 128$"
+            else:
+                try:
+                    peak_bytes = float(row.get("peak_total_bytes", np.nan))
+                    val = peak_bytes / 1e9
+                    data["Space (GB)"][sys_name] = val
+                    if not np.isnan(val):
+                        annot["Space (GB)"][sys_name] = f"{val:.2f}"
+                except ValueError:
+                    pass
+
+            # 2. Update Speed
+            if is_oom:
+                annot["Update Speed (100k/s)"][sys_name] = "OOM"
+            else:
+                try:
+                    insert_ups = str(row.get("insert_updates_per_sec", "nan"))
+                    if insert_ups.lower() != "nan" and float(insert_ups) > 0:
+                        ups = float(insert_ups)
+                    else:
+                        ups = float(row.get("updates_per_sec", np.nan))
+                    val = ups / 100000.0
+                    data["Update Speed (100k/s)"][sys_name] = val
+                    if not np.isnan(val):
+                        annot["Update Speed (100k/s)"][sys_name] = f"{val:.1f}"
+                except ValueError:
+                    pass
+
+            # 3. Query Speed
+            if is_oom:
+                annot["Query Speed (100k/s)"][sys_name] = "OOM"
+            else:
+                try:
+                    query_ups = float(row.get("post_queries_per_sec", np.nan))
+                    val = query_ups / 100000.0
+                    data["Query Speed (100k/s)"][sys_name] = val
+                    if not np.isnan(val):
+                        annot["Query Speed (100k/s)"][sys_name] = f"{val:.1f}"
+                except ValueError:
+                    pass
 
     return data, annot
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--revision-dir", type=Path, default=Path.home() / "research/speed_results_REVISION")
+    parser.add_argument(
+        "--cluster-forest-dir", "--revision-dir", dest="cluster_forest_dir", type=Path,
+        default=Path.home() / "research/speed_results_REVISION"
+    )
+    parser.add_argument("--hybridscale-dir", type=Path, default=Path.home() / "research/speed_results_REVISION_25x")
     parser.add_argument("--cupcake-dir", type=Path, default=Path.home() / "research/speed_results_REVISION_cupcake")
     parser.add_argument("--output-dir", type=Path, default=Path("results/speed_heatmaps"))
     args = parser.parse_args()
     
-    if not args.revision_dir.is_dir():
-        print(f"Directory not found: {args.revision_dir}")
+    if not args.cluster_forest_dir.is_dir():
+        print(f"Directory not found: {args.cluster_forest_dir}")
+        return 1
+    if not args.hybridscale_dir.is_dir():
+        print(f"Directory not found: {args.hybridscale_dir}")
         return 1
         
     datasets = []
-    for path in args.revision_dir.iterdir():
+    for path in args.cluster_forest_dir.iterdir():
         if path.is_dir() and path.name.endswith("_sym"):
             datasets.append(path.name[:-4])
             
@@ -158,7 +169,9 @@ def main():
     }
     
     for ds in datasets:
-        ds_data, ds_annot = process_dataset(ds, args.revision_dir, args.cupcake_dir)
+        ds_data, ds_annot = process_dataset(
+            ds, args.cluster_forest_dir, args.hybridscale_dir, args.cupcake_dir
+        )
         for metric in all_data:
             for sys_name in SYSTEM_NAMES:
                 all_data[metric].loc[sys_name, ds] = ds_data[metric][sys_name]

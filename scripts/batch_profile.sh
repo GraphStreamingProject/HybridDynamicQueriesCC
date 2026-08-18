@@ -634,7 +634,7 @@ process_stream() {
 
         if [[ ${#RUN_CONFIG_SPECS[@]} -gt 0 ]]; then
             for spec in "${RUN_CONFIG_SPECS[@]}"; do
-                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries cfg_min_num_tiers <<< "$spec"
+                IFS='|' read -r cfg_algo cfg_cutset cfg_sketch cfg_hybrid cfg_threshold cfg_threshold_mult cfg_batch_size cfg_num_tiers cfg_speed_interval cfg_correctness_repeats cfg_correctness_check_interval cfg_post_queries_per_update cfg_interleaved_queries_per_update cfg_profile_interval cfg_post_num_queries cfg_min_num_tiers cfg_move_to_sketch <<< "$spec"
                 if [[ "$cfg_algo" == "cf" ]]; then
                     local cf_args=(--algo cf --stream "$CURRENT_STREAM_FILE" --output-dir "$CURRENT_OUTPUT_DIR" --auto-build)
                     if [[ -n "$cfg_profile_interval" ]]; then
@@ -754,6 +754,13 @@ process_stream() {
                 if [[ "$cfg_hybrid" == "true" ]]; then
                     args+=(--hybrid)
                     [[ -n "$threshold_to_use" ]] && args+=(--hybrid-threshold "$threshold_to_use")
+                    if [[ -n "$cfg_move_to_sketch" ]]; then
+                        if [[ "$cfg_move_to_sketch" =~ ^[1-9][0-9]*$ ]]; then
+                            args+=(--move-to-sketch "$cfg_move_to_sketch")
+                        else
+                            echo "Warning: ignoring non-positive move_to_sketch '$cfg_move_to_sketch' in config '$spec'"
+                        fi
+                    fi
                 fi
                 [[ -n "$cfg_post_queries_per_update" ]] && args+=(--post-queries-per-update "$cfg_post_queries_per_update")
                 [[ -n "$cfg_interleaved_queries_per_update" ]] && args+=(--interleaved-queries-per-update "$cfg_interleaved_queries_per_update")

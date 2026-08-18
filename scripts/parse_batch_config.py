@@ -8,7 +8,7 @@ Modes:
         batch_size, num_tiers, speed_interval, correctness_repeats,
         correctness_check_interval, post_queries_per_update,
         interleaved_queries_per_update, profile_interval, post_num_queries,
-        min_num_tiers
+      min_num_tiers, move_to_sketch
 """
 
 from __future__ import annotations
@@ -79,6 +79,7 @@ def main() -> int:
         profile_interval = _as_str(cfg, "profile_interval")
         post_num_queries = _as_str(cfg, "post_num_queries")
         min_num_tiers = _as_str(cfg, "min_num_tiers")
+        move_to_sketch = _as_str(cfg, "move_to_sketch")
         print("|".join([
             algo,
             cutset,
@@ -96,6 +97,7 @@ def main() -> int:
             profile_interval,
             post_num_queries,
             min_num_tiers,
+            move_to_sketch,
         ]))
 
     return 0
