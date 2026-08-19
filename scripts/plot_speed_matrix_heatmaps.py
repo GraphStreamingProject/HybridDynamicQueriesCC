@@ -5,8 +5,10 @@ Columns: Datasets
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
+from typing import cast
 
 try:
     import numpy as np
@@ -18,14 +20,108 @@ except ImportError as exc:
     raise SystemExit(1) from exc
 
 from sweep_summary_discovery import summarize_manifest
+from dataset_metadata import order_datasets
 
 SYSTEM_NAMES = ["Cluster Forest", r"\textsc{HybridSCALE}", r"\textsc{CUPCaKE}"]
+
+LCT_OBJECT_BYTES = 24
+LCT_NODE_BYTES = 40
+LCT_MAP_SLOT_BYTES = 16
+ABSL_GROUP_WIDTH = 16
+
+
+def absl_capacity_to_growth(capacity: int) -> int:
+    """Mirror Abseil Swiss-table growth limits for the current 16-slot groups."""
+    max_full_capacity = ABSL_GROUP_WIDTH * 4 - 1
+    if capacity <= max_full_capacity:
+        return capacity - int(capacity >= ABSL_GROUP_WIDTH - 1)
+    return capacity - capacity // 8
+
+
+def absl_capacity_for_size(size: int) -> int:
+    """Return the smallest 2^k-1 Swiss-table capacity that can hold size entries."""
+    if size <= 0:
+        return 0
+    capacity = 1
+    while absl_capacity_to_growth(capacity) < size:
+        capacity = capacity * 2 + 1
+    return capacity
+
+
+def latex_bold_label(label: str) -> str:
+    return "\n".join(rf"\textbf{{{line}}}" for line in label.split("\n"))
+
+
+def approximate_lct_bytes(row: pd.Series) -> float:
+    """Estimate the TopLevelForest LCT allocation for the row's build mode."""
+    if str(row.get("algo", "")) == "cf":
+        return 0.0
+
+    if str(row.get("hybrid", "")).lower() == "true":
+        active_vertices = int(float(row.get("peak_num_sketched_vertices", 0)))
+        capacity = absl_capacity_for_size(active_vertices)
+        return float(
+            LCT_OBJECT_BYTES
+            + active_vertices * LCT_NODE_BYTES
+            + capacity * LCT_MAP_SLOT_BYTES
+        )
+
+    num_nodes = int(float(row.get("num_nodes", 0)))
+    return float(LCT_OBJECT_BYTES + num_nodes * LCT_NODE_BYTES)
+
+
+def total_space_bytes(row: pd.Series, approximate_lct: bool) -> float:
+    peak_total = float(row.get("peak_total_bytes", np.nan))
+    if not approximate_lct or str(row.get("algo", "")) == "cf":
+        return peak_total
+
+    recorded_lct = float(row.get("peak_top_level_lct_bytes", 0) or 0)
+    if np.isnan(recorded_lct):
+        recorded_lct = 0.0
+    return peak_total - recorded_lct + approximate_lct_bytes(row)
+
+
+def print_hybridscale_space_stats(space: pd.DataFrame, approximate_lct: bool) -> None:
+    hybrid_name = r"\textsc{HybridSCALE}"
+    alternative_names = ["Cluster Forest", r"\textsc{CUPCaKE}"]
+    ratios: list[float] = []
+
+    for dataset in space.columns:
+        hybrid_space = cast(float, space.at[hybrid_name, dataset])
+        alternatives: list[float] = []
+        for name in alternative_names:
+            alternative_space = cast(float, space.at[name, dataset])
+            if np.isfinite(alternative_space) and alternative_space > 0:
+                alternatives.append(alternative_space)
+        if not np.isfinite(hybrid_space) or hybrid_space <= 0 or not alternatives:
+            continue
+        ratios.append(hybrid_space / min(alternatives))
+
+    mode = "approximated LCT" if approximate_lct else "recorded LCT"
+    if not ratios:
+        print(f"HybridSCALE space statistics ({mode}): no comparable graphs")
+        return
+
+    geometric_mean = math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
+    best_count = sum(ratio <= 1.0 for ratio in ratios)
+    graph_count = len(ratios)
+
+    print(f"HybridSCALE space statistics ({mode}, {graph_count} comparable graphs):")
+    print(f"  Geometric mean vs best alternative: {geometric_mean:.4f}x")
+    print(f"  Best system: {best_count}/{graph_count} ({100.0 * best_count / graph_count:.1f}%)")
+    for percent in (10, 15, 20):
+        within_count = sum(ratio <= 1.0 + percent / 100.0 for ratio in ratios)
+        print(
+            f"  Within {percent}% of best alternative: {within_count}/{graph_count} "
+            f"({100.0 * within_count / graph_count:.1f}%)"
+        )
 
 def process_dataset(
     dataset_name: str,
     base_cluster_forest: Path,
     base_hybridscale: Path,
-    base_cupcake: Path
+    base_cupcake: Path,
+    approximate_lct: bool,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, str]]]:
     
     data = {
@@ -92,7 +188,7 @@ def process_dataset(
                 annot["Space (GB)"][sys_name] = r"$\ge 128$"
             else:
                 try:
-                    peak_bytes = float(row.get("peak_total_bytes", np.nan))
+                    peak_bytes = total_space_bytes(row, approximate_lct)
                     val = peak_bytes / 1e9
                     data["Space (GB)"][sys_name] = val
                     if not np.isnan(val):
@@ -141,6 +237,11 @@ def main():
     parser.add_argument("--hybridscale-dir", type=Path, default=Path.home() / "research/speed_results_REVISION_25x")
     parser.add_argument("--cupcake-dir", type=Path, default=Path.home() / "research/speed_results_REVISION_cupcake")
     parser.add_argument("--output-dir", type=Path, default=Path("results/speed_heatmaps"))
+    parser.add_argument(
+        "--approximate-lct",
+        action="store_true",
+        help="replace recorded top-level LCT bytes with a container-aware estimate",
+    )
     args = parser.parse_args()
     
     if not args.cluster_forest_dir.is_dir():
@@ -155,7 +256,7 @@ def main():
         if path.is_dir() and path.name.endswith("_sym"):
             datasets.append(path.name[:-4])
             
-    datasets.sort()
+    datasets, dataset_labels = order_datasets(datasets)
     
     all_data = {
         "Space (GB)": pd.DataFrame(index=SYSTEM_NAMES, columns=datasets),
@@ -170,7 +271,11 @@ def main():
     
     for ds in datasets:
         ds_data, ds_annot = process_dataset(
-            ds, args.cluster_forest_dir, args.hybridscale_dir, args.cupcake_dir
+            ds,
+            args.cluster_forest_dir,
+            args.hybridscale_dir,
+            args.cupcake_dir,
+            args.approximate_lct,
         )
         for metric in all_data:
             for sys_name in SYSTEM_NAMES:
@@ -179,6 +284,8 @@ def main():
                 
     for metric in all_data:
         all_data[metric] = all_data[metric].apply(pd.to_numeric)
+
+    print_hybridscale_space_stats(all_data["Space (GB)"], args.approximate_lct)
         
     args.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -222,6 +329,8 @@ def main():
             ax=ax,
             cbar=False  
         )
+        ax.set_xticklabels([latex_bold_label(label) for label in dataset_labels])
+        ax.set_yticklabels([rf"\textbf{{{label}}}" for label in SYSTEM_NAMES])
         
         # Manually draw text for NaN cells (e.g. OOMs) which seaborn skips
         for y in range(color_df.shape[0]):
@@ -232,12 +341,12 @@ def main():
                         ax.text(x + 0.5, y + 0.5, text_val,
                                 ha='center', va='center', color='black')
         
-        ax.set_title(f"{metric_name}")
+        ax.set_title(rf"\textbf{{{metric_name}}}", fontsize=16, pad=12)
         ax.set_xlabel("")
         ax.set_ylabel("")
         
-        plt.xticks(rotation=45, ha='right')
-        plt.yticks(rotation=0, va='center')
+        plt.xticks(rotation=0, ha="center", fontweight="bold")
+        plt.yticks(rotation=0, va="center", fontsize=12, fontweight="bold")
         
         fig.tight_layout()
         out_path = args.output_dir / filename

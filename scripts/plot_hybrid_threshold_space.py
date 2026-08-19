@@ -24,7 +24,6 @@ COMPONENTS = (
     ("peak_cf_bytes", "Cluster Forest"),
     ("peak_sketch_bytes", r"\textsc{BalloonDC}"),
     ("peak_recovery_bytes", "Recovery"),
-    ("peak_driver_bytes", "Manager"),
 )
 
 CUPCAKE_OUTLIER_RATIO = 2.0
@@ -135,6 +134,10 @@ def dataset_label(rows: list[dict[str, str]], override: str | None) -> str:
     raise ValueError("summary contains multiple datasets; pass --dataset-name and provide a single-dataset TSV")
 
 
+def hybrid_threshold_label(multiplier: float) -> str:
+    return rf"${multiplier:g}\lceil \log_2 V \rceil$"
+
+
 def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
     rows = read_rows(summary_path)
     cupcake_row, balloon_only_row, hybrid_rows, cf_row = select_plot_rows(rows)
@@ -161,7 +164,8 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
     if balloon_only_row is not None:
         labels.append(r"\textsc{BalloonDC}" + "\nOnly")
     labels += [
-        rf"${float(row['hybrid_threshold_multiplier']):g}\times$" for row in hybrid_rows
+        hybrid_threshold_label(float(row["hybrid_threshold_multiplier"]))
+        for row in hybrid_rows
     ] + ["Cluster Forest\nOnly"]
 
     sns.set_theme(context="paper", style="whitegrid", font_scale=1.25)
@@ -276,10 +280,10 @@ def plot_space(summary_path: Path, output_path: Path, name: str | None) -> None:
             )
 
     ax.set_xticks(x_positions, labels)
-    ax.set_xlabel("System / hybrid threshold multiplier")
-    ax.set_ylabel("Peak space relative to Cluster Forest")
+    ax.set_xlabel("Hybrid Threshold")
+    ax.set_ylabel("Peak Space Usage (relative to CF)")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _position: rf"${value:g}\times$"))
-    ax.set_title(f"{dataset_label(plot_rows, name)}: peak system space")
+    ax.set_title(dataset_label(plot_rows, name), fontsize=18)
     ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False)
     ax.grid(axis="x", visible=False)
     ax.set_axisbelow(True)

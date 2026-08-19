@@ -41,12 +41,14 @@ from plot_hybrid_threshold_space import (
     COMPONENTS,
     cupcake_failure_label,
     dataset_label,
+    hybrid_threshold_label,
     parse_nonnegative,
     plot_space,
     read_rows,
     select_plot_rows,
 )
 from sweep_summary_discovery import summary_paths_by_dataset
+from dataset_metadata import canonical_dataset_name, full_dataset_name, order_datasets
 
 
 SKETCH_LABELS = {
@@ -127,6 +129,7 @@ def plot_paired_dataset(
     balloon_summary: Path,
     cameo_summary: Path,
     pdf: PdfPages,
+    individual_output: Path,
 ) -> None:
     balloon_rows = read_rows(balloon_summary)
     cameo_rows = read_rows(cameo_summary)
@@ -256,13 +259,13 @@ def plot_paired_dataset(
             )
 
     labels = [r"\textsc{CUPCaKE}", r"\textsc{BalloonDC}" + "\nOnly"]
-    labels += [rf"${value:g}\times$" for value in multipliers]
+    labels += [hybrid_threshold_label(value) for value in multipliers]
     labels += ["Cluster Forest\nOnly"]
     ax.set_xticks([0, 1, *hybrid_positions, cf_position], labels)
-    ax.set_xlabel("System / hybrid threshold multiplier")
-    ax.set_ylabel("Peak space relative to Cluster Forest")
+    ax.set_xlabel("Hybrid Threshold")
+    ax.set_ylabel("Peak Space Usage (relative to CF)")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _position: rf"${value:g}\times$"))
-    ax.set_title(f"{dataset}: peak system space")
+    ax.set_title(full_dataset_name(dataset), fontsize=18)
     component_handles = [Patch(facecolor=component_colors[i], label=label) for i, (_, label) in enumerate(COMPONENTS)]
     sketch_handles = [
         Patch(facecolor="white", edgecolor="black", hatch=SKETCH_HATCHES[sketch], label=label)
@@ -280,6 +283,8 @@ def plot_paired_dataset(
     ax.set_ylim(0, plot_ceiling)
     fig.tight_layout()
     pdf.savefig(fig, bbox_inches="tight")
+    individual_output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(individual_output, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -294,10 +299,11 @@ def write_existing_chart_pdf(
     with tempfile.TemporaryDirectory(prefix="sweep_space_") as temp_dir, PdfPages(output) as pdf:
         temp_path = Path(temp_dir)
         for dataset in datasets:
+            display_name = full_dataset_name(dataset)
             balloon_image = temp_path / f"{dataset}_balloon.png"
             cameo_image = temp_path / f"{dataset}_cameo.png"
-            plot_space(balloon_summaries[dataset], balloon_image, dataset)
-            plot_space(cameo_summaries[dataset], cameo_image, dataset)
+            plot_space(balloon_summaries[dataset], balloon_image, display_name)
+            plot_space(cameo_summaries[dataset], cameo_image, display_name)
 
             fig, axes = plt.subplots(1, 2, figsize=(15.0, 5.8))
             for ax, image, label in zip(
@@ -308,7 +314,7 @@ def write_existing_chart_pdf(
                 ax.imshow(plt.imread(image))
                 ax.set_title(label)
                 ax.axis("off")
-            fig.suptitle(dataset, fontsize=16)
+            fig.suptitle(display_name, fontsize=16)
             fig.tight_layout()
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
@@ -330,10 +336,18 @@ def main() -> int:
         "--paired-output", type=Path,
         help="Combined PDF for the paired BalloonSketch/CameoSketch threshold chart",
     )
+    parser.add_argument(
+        "--per-dataset-output-dir", type=Path,
+        help="Directory for one paired-threshold PDF per dataset",
+    )
     args = parser.parse_args()
 
     individual_output = args.individual_output or args.output_dir / "sweep_space_by_sketch.pdf"
     paired_output = args.paired_output or args.output_dir / "sweep_space_paired_thresholds.pdf"
+    per_dataset_output_dir = (
+        args.per_dataset_output_dir
+        or args.output_dir / "paired_thresholds_by_dataset"
+    )
     try:
         balloon_summaries = summary_paths_by_dataset(args.balloon_results)
         cameo_summaries = summary_paths_by_dataset(args.cameo_results)
@@ -346,19 +360,29 @@ def main() -> int:
             if missing_cameo:
                 details.append(f"only in BalloonSketch: {', '.join(missing_cameo)}")
             raise ValueError("dataset sets differ: " + "; ".join(details))
-        datasets = sorted(balloon_summaries)
+        datasets, _ = order_datasets(list(balloon_summaries))
 
         write_existing_chart_pdf(datasets, balloon_summaries, cameo_summaries, individual_output)
         paired_output.parent.mkdir(parents=True, exist_ok=True)
         with PdfPages(paired_output) as pdf:
             for dataset in datasets:
-                plot_paired_dataset(dataset, balloon_summaries[dataset], cameo_summaries[dataset], pdf)
+                dataset_output = per_dataset_output_dir / (
+                    f"{canonical_dataset_name(dataset)}_paired_thresholds.pdf"
+                )
+                plot_paired_dataset(
+                    dataset,
+                    balloon_summaries[dataset],
+                    cameo_summaries[dataset],
+                    pdf,
+                    dataset_output,
+                )
     except (OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
     print(f"Wrote {individual_output}")
     print(f"Wrote {paired_output}")
+    print(f"Wrote per-dataset PDFs to {per_dataset_output_dir}")
     return 0
 
 
