@@ -16,6 +16,100 @@ cmake .. -DBUILD_BENCH=no -DCMAKE_BUILD_TYPE=Release -DSKETCH_BUFFER_SIZE=1 -DPA
 
 There are many executables for various versions of our system. There are "bench_speed_" executables which simply get the running time, and "bench_profile_" executables get various properties periodically such as memory usage.
 
+### Dataset CSVs from static graphs
+
+Batch experiments accept a dataset CSV or TSV with these columns:
+
+```text
+dataset_name,filepath,num_vertices,num_edges
+```
+
+Generate this file from one or more static graphs with `scripts/static_graph_info.py`. It supports binary symmetric CSR and Parlay text graphs, and computes the vertex and edge counts required by the batch drivers:
+
+```bash
+python3 scripts/static_graph_info.py \
+	--output datasets.csv \
+	/path/to/graph_a.bin /path/to/graph_b.bin
+```
+
+By default, the generated CSV records absolute paths. Add `--keep-input-paths` to retain the input path spelling instead. See [scripts/configs/datasets.example.csv](scripts/configs/datasets.example.csv) for a minimal example.
+
+### Main experiments
+
+The main configurations run static insertions, 20 million post-insert queries, and deletions. Supply the dataset CSV generated above and `--do-deletions` to each command.
+
+HybridSCALE uses [scripts/configs/optimal_hybridscale_main.json](scripts/configs/optimal_hybridscale_main.json):
+
+```bash
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/optimal_hybridscale_main.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+```bash
+scripts/batch_profile.sh \
+	--batch-config scripts/configs/optimal_hybridscale_main.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+CUPCaKE uses [scripts/configs/mpi_ett_fixed_main_derived_1p7x.json](scripts/configs/mpi_ett_fixed_main_derived_1p7x.json):
+
+```bash
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/mpi_ett_fixed_main_derived_1p7x.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+```bash
+scripts/batch_profile.sh \
+	--batch-config scripts/configs/mpi_ett_fixed_main_derived_1p7x.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+Cluster Forest uses [scripts/configs/cluster_forest_main.json](scripts/configs/cluster_forest_main.json):
+
+```bash
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/cluster_forest_main.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+```bash
+scripts/batch_profile.sh \
+	--batch-config scripts/configs/cluster_forest_main.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
+### Interleaved-query experiments
+
+The query-sweep configurations run queries throughout the insert/delete workload at 0.1 and 1.0 queries per update, corresponding to one query per 10 updates and one query per update. These are speed experiments, so use `scripts/batch_speed.sh`:
+
+```bash
+# HybridSCALE
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/optimal_hybridscale_querysweep.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+
+# CUPCaKE
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/mpi_ett_fixed_main_interleaved_derived_1p7x.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+
+# Cluster Forest
+scripts/batch_speed.sh \
+	--batch-config scripts/configs/cluster_forest_querysweep.json \
+	--dataset-config /path/to/datasets.csv \
+	--do-deletions
+```
+
 ### Speed benchmark queries
 
 Dynamic streams report total query time, throughput, and average query latency. Static graph runs support rate-based random vertex-pair workloads in addition to the existing `--num-queries` option:

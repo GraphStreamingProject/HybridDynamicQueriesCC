@@ -237,7 +237,7 @@ def plot_paired_dataset(
         ax.annotate(
             rf"${total:.2f}\times$",
             (position, min(total, 0.94 * plot_ceiling)),
-            xytext=(0, 4), textcoords="offset points", ha="center", va="bottom", fontsize=8,
+            xytext=(0, 4), textcoords="offset points", ha="center", va="bottom", fontsize=9,
         )
 
     for total, kind, position in totals:

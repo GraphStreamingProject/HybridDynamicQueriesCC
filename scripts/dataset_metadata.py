@@ -19,14 +19,14 @@ DATASETS: list[DatasetMetadata] = [
     {"dataset_name": "enwiki", "display_name": "EN\nWIKI", "full_name": "ENWiki"},
     {"dataset_name": "com-youtube", "display_name": "YT", "full_name": "Youtube"},
     {"dataset_name": "RoadUSA", "display_name": "ROAD\nUSA", "full_name": "RoadUSA"},
-    {"dataset_name": "Germany", "display_name": "ROAD\nGER", "full_name": "RoadGermany"},
-    {"dataset_name": "sift_RS-50K", "display_name": "SIFT\nRS", "full_name": "SIFT-RS50K"},
-    {"dataset_name": "sift_KNN-500", "display_name": "SIFT\nKNN", "full_name": "SIFT-KNN500"},
-    {"dataset_name": "msspace_RS-10K", "display_name": "MSSP\nRS", "full_name": "MSSP-RS10K"},
-    {"dataset_name": "msspace_KNN-500", "display_name": "MSSP\nKNN", "full_name": "MSSP-KNN500"},
-    {"dataset_name": "kron_13", "display_name": "KRON\n13", "full_name": "Kron-13"},
-    {"dataset_name": "kron_15", "display_name": "KRON\n15", "full_name": "Kron-15"},
-    {"dataset_name": "kron_16", "display_name": "KRON\n16", "full_name": "Kron-16"},
+    {"dataset_name": "Germany", "display_name": "ROAD\nGER", "full_name": "RoadGER"},
+    {"dataset_name": "sift_RS-50K", "display_name": "SIFT\nRS", "full_name": "SIFT-RS-50K"},
+    {"dataset_name": "sift_KNN-500", "display_name": "SIFT\nKNN", "full_name": "SIFT-KNN-500"},
+    {"dataset_name": "msspace_RS-10K", "display_name": "MSSP\nRS", "full_name": "MSSPACE-RS-10K"},
+    {"dataset_name": "msspace_KNN-500", "display_name": "MSSP\nKNN", "full_name": "MSSPACE-KNN-500"},
+    {"dataset_name": "kron_13", "display_name": "KRON\n13", "full_name": "kron-13"},
+    {"dataset_name": "kron_15", "display_name": "KRON\n15", "full_name": "kron-15"},
+    {"dataset_name": "kron_16", "display_name": "KRON\n16", "full_name": "kron-16"},
 ]
 
 

@@ -327,7 +327,8 @@ def main():
             vmax=1.0,  # tanh naturally bounds between 0 and 1
             linewidths=0.5,
             ax=ax,
-            cbar=False  
+            cbar=False,
+            annot_kws={"fontsize": 13},
         )
         ax.set_xticklabels([latex_bold_label(label) for label in dataset_labels])
         ax.set_yticklabels([rf"\textbf{{{label}}}" for label in SYSTEM_NAMES])
@@ -339,7 +340,7 @@ def main():
                     text_val = annot_df.iloc[y, x]
                     if pd.notna(text_val) and text_val != "NaN":
                         ax.text(x + 0.5, y + 0.5, text_val,
-                                ha='center', va='center', color='black')
+                            ha='center', va='center', color='black', fontsize=13)
         
         ax.set_title(rf"\textbf{{{metric_name}}}", fontsize=16, pad=12)
         ax.set_xlabel("")
