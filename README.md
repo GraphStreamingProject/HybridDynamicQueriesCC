@@ -110,14 +110,6 @@ scripts/batch_speed.sh \
 	--do-deletions
 ```
 
-### Speed benchmark queries
-
-Dynamic streams report total query time, throughput, and average query latency. Static graph runs support rate-based random vertex-pair workloads in addition to the existing `--num-queries` option:
-
-- `--post-queries-per-update C` runs `round(C * U)` queries after all inserts and before optional deletes, where $U$ is the number of static insert/delete updates.
-- `--interleaved-queries-per-update C` places queries throughout all static updates using an exponential-interarrival Poisson schedule with expected $C * U$ queries. Rates above one are supported.
-
-Query time is reported separately from insert/delete timings. The batch driver accepts both flags directly and from JSON batch configurations. For the standard interleaved-query sweep (0, 0.2, and 5 queries per update; no post queries), use [scripts/configs/static_query_sweep.json](scripts/configs/static_query_sweep.json) with `scripts/batch_speed.sh --static-graph --batch-config ...`.
 
 ### Hybrid threshold sweep
 
@@ -127,6 +119,7 @@ Query time is reported separately from insert/delete timings. The batch driver a
 scripts/batch_speed.sh --dataset-config datasets.csv --batch-config scripts/configs/hybrid_threshold_sweep.json
 scripts/batch_profile.sh --dataset-config datasets.csv --batch-config scripts/configs/hybrid_threshold_sweep.json
 ```
+## Running Experiments directly
 
 For Cluster Forest:
 ```
