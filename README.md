@@ -1,3 +1,4 @@
+This is an anonymized repo for the SIGMOD 2027 submission *Hybrid-Sketching Methods for Dynamic Connectivity on Sparse Graphs*. 
 
 This code solves the dynamic connectivity problem: it takes in a dynamic stream of edge insertions and deletions that define a graph, and can answer connectivity queries during any time in the stream. 
 Each query is of the form `(u,v)` and returns `true` if `u` and `v` are currently connected and `false` otherwise.
